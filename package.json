@@ -1,0 +1,18 @@
+{
+  "name": "ep-games",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "web",
+    "game-service",
+    "search-service"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=web",
+    "dev:web": "npm run dev --workspace=web",
+    "dev:game": "npm run dev --workspace=game-service",
+    "dev:search": "npm run dev --workspace=search-service",
+    "build": "npm run build --workspace=web",
+    "build:all": "npm run build --workspaces --if-present"
+  }
+}

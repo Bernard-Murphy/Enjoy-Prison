@@ -1,0 +1,27 @@
+services:
+  postgres:
+    image: postgres:16
+    ports: ["6433:5432"]
+    environment:
+      POSTGRES_DB: epgames
+      POSTGRES_USER: epgames
+      POSTGRES_PASSWORD: epgames
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+  elasticsearch:
+    image: elasticsearch:8.12.0
+    ports: ["9200:9200"]
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+  minio:
+    image: minio/minio
+    ports: ["9000:9000", "9001:9001"]
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
+volumes:
+  postgres_data: {}
+  minio_data: {}

@@ -1,0 +1,128 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id          Int      @id @default(autoincrement())
+  username    String   @unique @db.VarChar(30)
+  displayName String?  @map("display_name") @db.VarChar(30)
+  avatar      String?  @db.VarChar(500)
+  email       String   @db.VarChar(255)
+  passwordHash String @map("password_hash") @db.VarChar(255)
+  bio         String?  @db.Text
+  role        String   @default("child") @db.VarChar(20)
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  games         Game[]
+  comments      Comment[]
+  reports       Report[]
+  sessions      Session[]
+  modLogs       ModLog[]
+  passwordResets PasswordReset[]
+}
+
+model Session {
+  id        Int      @id @default(autoincrement())
+  uuid      String   @unique @default(uuid()) @db.VarChar(36)
+  userId    Int?     @map("user_id")
+  user      User?    @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+}
+
+model Game {
+  id          Int      @id @default(autoincrement())
+  title       String   @db.VarChar(30)
+  status      String   @db.VarChar(20)
+  userId      Int?     @map("user_id")
+  user        User?    @relation(fields: [userId], references: [id])
+  description String  @db.Text
+  views       Int      @default(0)
+  forkedFrom  Int?     @map("forked_from")
+  hostedAt    String   @map("hosted_at") @db.VarChar(500)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  gamePlan     GamePlan?
+  buildLogs    GameBuildLog[]
+  chatMessages ChatMessage[]
+}
+
+model Comment {
+  id         Int       @id @default(autoincrement())
+  text       String    @db.Text
+  flavor     String    @db.VarChar(20)
+  replyingTo Int?      @map("replying_to")
+  contentId  Int       @map("content_id")
+  userId     Int?      @map("user_id")
+  user       User?     @relation(fields: [userId], references: [id])
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+}
+
+model GamePlan {
+  id        Int      @id @default(autoincrement())
+  gameId    Int      @unique @map("game_id")
+  game      Game     @relation(fields: [gameId], references: [id])
+  planText  String   @map("plan_text") @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+}
+
+model GameBuildLog {
+  id        Int      @id @default(autoincrement())
+  gameId    Int      @map("game_id")
+  game      Game     @relation(fields: [gameId], references: [id])
+  buildText String   @map("build_text") @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+}
+
+model ChatMessage {
+  id          Int      @id @default(autoincrement())
+  gameId      Int      @map("game_id")
+  game        Game     @relation(fields: [gameId], references: [id])
+  role        String   @default("user") @db.VarChar(20)
+  messageKind String?  @map("message_kind") @db.VarChar(20)
+  message     String   @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+}
+
+model Report {
+  id        Int      @id @default(autoincrement())
+  flavor    String   @db.VarChar(20)
+  contentId Int      @map("content_id")
+  dismissed Boolean  @default(false)
+  userId    Int?     @map("user_id")
+  user      User?    @relation(fields: [userId], references: [id])
+  reason    String   @db.VarChar(50)
+  details   String?  @db.VarChar(1000)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+}
+
+model ModLog {
+  id        Int      @id @default(autoincrement())
+  flavor    String   @db.VarChar(50)
+  userId    Int      @map("user_id")
+  user      User     @relation(fields: [userId], references: [id])
+  details   String   @db.VarChar(1000)
+  createdAt DateTime @default(now()) @map("created_at")
+}
+
+model PasswordReset {
+  id        Int      @id @default(autoincrement())
+  uuid      String   @unique @db.VarChar(36)
+  email     String   @db.VarChar(255)
+  valid     Boolean  @default(true)
+  userId    Int      @map("user_id")
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+}
