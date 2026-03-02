@@ -27,10 +27,30 @@ Format for plan: TYPE: plan (then a blank line, then a structured plan with:
 5. Step-by-step implementation notes for Phaser
 Use clear sections and bullet points.)`;
 
+async function sendPlanChunk(
+  planLogCallbackUrl: string | undefined,
+  gameId: number,
+  planText: string,
+): Promise<void> {
+  if (!planLogCallbackUrl) return;
+  try {
+    await fetch(planLogCallbackUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gameId, planText }),
+    });
+  } catch (err) {
+    console.error("Plan chunk error:", err);
+    // ignore
+  }
+}
+
 export async function handlePlan(req: Request, res: Response): Promise<void> {
-  const { message, planText } = req.body as {
+  const { message, planText, gameId, planLogCallbackUrl } = req.body as {
     message?: string;
     planText?: string;
+    gameId?: number;
+    planLogCallbackUrl?: string;
   };
   if (!message || typeof message !== "string") {
     res.status(400).json({ error: "message required" });
@@ -46,6 +66,8 @@ export async function handlePlan(req: Request, res: Response): Promise<void> {
     typeof planText === "string" && planText.trim().length > 0
       ? `Current plan:\n${planText.trim()}\n\nUser requested changes:\n${message}`
       : message;
+
+  const gid = gameId != null && Number.isInteger(gameId) ? gameId : null;
 
   res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.setHeader("Transfer-Encoding", "chunked");
@@ -64,6 +86,9 @@ export async function handlePlan(req: Request, res: Response): Promise<void> {
       const text = chunk.choices[0]?.delta?.content;
       if (text) {
         res.write(text);
+        if (gid && planLogCallbackUrl) {
+          await sendPlanChunk(planLogCallbackUrl, gid, text);
+        }
         if (
           typeof (res as unknown as { flush?: () => void }).flush === "function"
         ) {

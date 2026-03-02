@@ -21,15 +21,25 @@ async function sendLog(
   gameId: number,
   buildText: string,
 ): Promise<void> {
-  if (!logCallbackUrl) return;
+  if (!logCallbackUrl) {
+    console.log("[game-service build] sendLog SKIP: no logCallbackUrl");
+    return;
+  }
   try {
-    await fetch(logCallbackUrl, {
+    const res = await fetch(logCallbackUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ gameId, buildText }),
     });
-  } catch {
-    // ignore log callback errors
+    if (!res.ok) {
+      console.error(
+        "[game-service build] sendLog FAIL",
+        res.status,
+        await res.text(),
+      );
+    }
+  } catch (err) {
+    console.error("[game-service build] sendLog ERROR", logCallbackUrl, err);
   }
 }
 
@@ -40,6 +50,12 @@ export async function handleBuild(req: Request, res: Response): Promise<void> {
     onCompleteUrl?: string;
     logCallbackUrl?: string;
   };
+  console.log(
+    "[game-service build] building gameId:",
+    gameId,
+    "logCallbackUrl:",
+    logCallbackUrl,
+  );
   if (!gameId || !planText) {
     res.status(400).json({ error: "gameId and planText required" });
     return;
@@ -54,7 +70,7 @@ export async function handleBuild(req: Request, res: Response): Promise<void> {
     res.status(503).json({ error: "S3 not configured" });
     return;
   }
-
+  console.log("start");
   res.setHeader("Content-Type", "application/json");
   res.json({ started: true, gameId });
 
@@ -66,13 +82,34 @@ export async function handleBuild(req: Request, res: Response): Promise<void> {
 Plan:
 ${planText.slice(0, 8000)}`;
 
-    const completion = await openai.chat.completions.create({
+    // Venice / Claude Opus 4.6: reasoning.effort "max" = highest (supported: low, medium, high, max)
+    const stream = (await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL || "gpt-4o-mini",
       messages: [{ role: "user", content: codePrompt }],
-    });
+      stream: true,
+      max_tokens: 128_000,
+      temperature: 0,
+      reasoning: { effort: "medium" }, // low, medium, high, and max
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any)) as unknown as AsyncIterable<{
+      choices: Array<{
+        delta?: { reasoning_content?: string; content?: string };
+      }>;
+    }>;
 
-    const gameJs =
-      completion.choices[0]?.message?.content ?? "// No code generated";
+    let gameJs = "";
+    for await (const chunk of stream) {
+      const text = (chunk.choices[0]?.delta as any)?.reasoning_content;
+      const js = (chunk.choices[0]?.delta as any)?.content;
+      if (text) {
+        await sendLog(logCallbackUrl, gameId, text);
+      }
+      if (js) {
+        gameJs += js;
+      }
+    }
+    console.log("gameJs", gameJs);
+    if (!gameJs.trim()) gameJs = "// No code generated";
     const prefix = `games/${gameId}`;
 
     await sendLog(logCallbackUrl, gameId, "Uploading to S3...");
@@ -86,9 +123,9 @@ ${planText.slice(0, 8000)}`;
 </head>
 <body>
   <script>${gameJs}</script>
-</body>
+</body> 
 </html>`;
-
+    console.log("s3");
     await s3.send(
       new PutObjectCommand({
         Bucket: BUCKET,
@@ -110,7 +147,7 @@ ${planText.slice(0, 8000)}`;
     const hostedUrl = GAME_BASE_URL
       ? `${GAME_BASE_URL.replace(/\/$/, "")}/${prefix}/index.html`
       : `/${prefix}/index.html`;
-
+    console.log("done", hostedUrl);
     if (onCompleteUrl) {
       try {
         await fetch(onCompleteUrl, {
@@ -122,7 +159,8 @@ ${planText.slice(0, 8000)}`;
             hostedAt: hostedUrl,
           }),
         });
-      } catch {
+      } catch (err) {
+        console.error("onCompleteUrl error", onCompleteUrl, err);
         // ignore callback errors
       }
     }
