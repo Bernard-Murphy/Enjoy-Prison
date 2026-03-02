@@ -3,7 +3,40 @@ const { parse } = require("url");
 const next = require("next");
 const { WebSocketServer } = require("ws");
 const { useServer } = require("graphql-ws/lib/use/ws");
+
+// Ensure a single pubsub instance for both WebSocket (useServer) and build-log/plan-log callbacks.
+// Load pubsub first so it registers on global; then schema/resolvers will use the same instance.
+const {
+  pubsub,
+  PLAN_CHUNKS,
+  planChunkBuffer,
+  buildLogBuffer,
+} = require("./src/lib/pubsub");
 const { schema } = require("./src/lib/graphql/apollo-server");
+const { appendBuildLogAndPublish } = require("./src/lib/build-log");
+const { prisma } = require("./src/lib/prisma");
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk;
+    });
+    req.on("end", () => resolve(body));
+    req.on("error", reject);
+  });
+}
+
+function sendJson(res, status, data) {
+  res.setHeader("Content-Type", "application/json");
+  res.statusCode = status;
+  res.end(JSON.stringify(data));
+}
+
+const { parse: parseGraphQL, execute } = require("graphql");
+const {
+  buildContextFromNodeRequest,
+} = require("./src/lib/graphql/context-node");
 
 const dev = process.env.NODE_ENV !== "production";
 const app = next({ dev });
@@ -14,6 +47,225 @@ app
   .then(() => {
     const server = createServer(async (req, res) => {
       const parsedUrl = parse(req.url, true);
+      const pathname = parsedUrl.pathname || "";
+      const isPost = req.method === "POST";
+
+      // Run GraphQL in this process so mutations (e.g. buildGame) use the same pubsub as WebSocket subscriptions.
+      if (isPost && pathname === "/api/graphql") {
+        console.log(
+          "[server.js] POST /api/graphql received (same-process GraphQL)",
+        );
+        let responseSent = false;
+        try {
+          const raw = await readBody(req);
+          const body = JSON.parse(raw || "{}");
+          const query = body.query;
+          if (!query) {
+            sendJson(res, 400, { errors: [{ message: "Missing query" }] });
+            responseSent = true;
+            return;
+          }
+          const operationName = body.operationName || null;
+          const { context, newSessionId } =
+            await buildContextFromNodeRequest(req);
+          const document = parseGraphQL(query);
+          const result = await execute({
+            schema,
+            document,
+            variableValues: body.variables || null,
+            operationName,
+            contextValue: context,
+          });
+          if (result.errors && result.errors.length > 0) {
+            console.log(
+              "[server.js] graphql result errors:",
+              result.errors.map((e) => e.message),
+            );
+          }
+          if (result.data) {
+            const keys = Object.keys(result.data);
+            console.log(
+              "[server.js] graphql result data keys:",
+              keys.join(", "),
+            );
+            if (result.data.gameBuildLogs) {
+              console.log(
+                "[server.js] gameBuildLogs count:",
+                result.data.gameBuildLogs.length,
+              );
+            }
+          }
+          res.setHeader("Content-Type", "application/json; charset=utf-8");
+          if (newSessionId) {
+            res.setHeader(
+              "Set-Cookie",
+              `session-id=${encodeURIComponent(newSessionId)}; path=/; max-age=2592000; samesite=lax`,
+            );
+          }
+          res.statusCode = 200;
+          const payload = JSON.stringify(result);
+          res.setHeader("Content-Length", Buffer.byteLength(payload, "utf8"));
+          res.end(payload);
+          responseSent = true;
+        } catch (err) {
+          console.error("[server.js] graphql error:", err);
+          if (!responseSent) {
+            sendJson(res, 500, {
+              errors: [
+                {
+                  message: err instanceof Error ? err.message : String(err),
+                },
+              ],
+            });
+          }
+        }
+        return;
+      }
+
+      // Plan stream polling: return current plan from buffer or DB so client can show plan when subscription doesn't deliver.
+      if (pathname === "/api/plan-stream" && req.method === "GET") {
+        const gameId = Number(parsedUrl.query?.gameId);
+        if (!gameId || !Number.isInteger(gameId)) {
+          sendJson(res, 400, { error: "gameId required" });
+          return;
+        }
+        (async () => {
+          try {
+            const buffer = planChunkBuffer.get(gameId);
+            const fromBuffer =
+              Array.isArray(buffer) && buffer.length > 0
+                ? buffer.join("")
+                : null;
+            if (fromBuffer !== null && fromBuffer.length > 0) {
+              sendJson(res, 200, { planText: fromBuffer });
+              return;
+            }
+            const row = await prisma.gamePlan.findUnique({
+              where: { gameId },
+              select: { planText: true },
+            });
+            sendJson(res, 200, {
+              planText: typeof row?.planText === "string" ? row.planText : "",
+            });
+          } catch (e) {
+            console.error("[server.js] plan-stream error:", e);
+            sendJson(res, 500, { error: "Internal server error" });
+          }
+        })();
+        return;
+      }
+
+      // Handle plan-log callback: game-service streams plan chunks here; we publish to planChunks subscription.
+      if (isPost && pathname === "/api/plan-log") {
+        console.log("[server.js] POST /api/plan-log received");
+        try {
+          const raw = await readBody(req);
+          const body = JSON.parse(raw || "{}");
+          const gameId = Number(body?.gameId);
+          const planText =
+            typeof body?.planText === "string" ? body.planText : "";
+          if (!gameId || !Number.isInteger(gameId)) {
+            sendJson(res, 400, { error: "gameId required" });
+            return;
+          }
+          if (!planChunkBuffer.has(gameId)) planChunkBuffer.set(gameId, []);
+          planChunkBuffer.get(gameId).push(planText);
+          pubsub.publish(`${PLAN_CHUNKS}:${gameId}`, {
+            planChunks: { planText },
+          });
+          sendJson(res, 200, { ok: true });
+        } catch (err) {
+          console.error("[server.js] plan-log error:", err);
+          sendJson(res, 500, { error: "Internal server error" });
+        }
+        return;
+      }
+
+      // Build log stream polling: return current build logs from buffer or DB so client can show logs when subscription doesn't deliver.
+      if (pathname === "/api/build-log-stream" && req.method === "GET") {
+        const gameId = Number(parsedUrl.query?.gameId);
+        if (!gameId || !Number.isInteger(gameId)) {
+          sendJson(res, 400, { error: "gameId required" });
+          return;
+        }
+        (async () => {
+          try {
+            const fromBuffer = buildLogBuffer.get(gameId) ?? [];
+            const rows = await prisma.gameBuildLog.findMany({
+              where: { gameId },
+              orderBy: { createdAt: "asc" },
+              select: { buildText: true },
+            });
+            const fromDb = rows.map((r) => r.buildText);
+            const logs =
+              fromBuffer.length >= fromDb.length ? fromBuffer : fromDb;
+            sendJson(res, 200, { logs });
+          } catch (e) {
+            console.error("[server.js] build-log-stream error:", e);
+            sendJson(res, 500, { error: "Internal server error" });
+          }
+        })();
+        return;
+      }
+
+      // Handle build-log callback in this process so pubsub is the same as WebSocket subscriptions.
+      if (isPost && pathname === "/api/build-log") {
+        console.log("[server.js] POST /api/build-log received");
+        try {
+          const raw = await readBody(req);
+          const body = JSON.parse(raw || "{}");
+          const gameId = Number(body?.gameId);
+          const buildText =
+            typeof body?.buildText === "string" ? body.buildText : "";
+          if (!gameId || !Number.isInteger(gameId)) {
+            console.log(
+              "[server.js] build-log reject: missing gameId or invalid",
+            );
+            sendJson(res, 400, { error: "gameId and buildText required" });
+            return;
+          }
+          if (!buildLogBuffer.has(gameId)) buildLogBuffer.set(gameId, []);
+          buildLogBuffer.get(gameId).push(buildText);
+          await appendBuildLogAndPublish(gameId, buildText);
+          console.log("[server.js] build-log done");
+          sendJson(res, 200, { ok: true });
+        } catch (err) {
+          console.error("[server.js] build-log error:", err);
+          sendJson(res, 500, { error: "Internal server error" });
+        }
+        return;
+      }
+
+      // Handle build-complete callback in this process for the same reason.
+      if (isPost && pathname === "/api/build-complete") {
+        console.log("[server.js] POST /api/build-complete received");
+        try {
+          const raw = await readBody(req);
+          const body = JSON.parse(raw || "{}");
+          const gameId = Number(body?.gameId);
+          const status =
+            typeof body?.status === "string" ? body.status : "live";
+          const hostedAt =
+            typeof body?.hostedAt === "string" ? body.hostedAt : "";
+          if (!gameId || !Number.isInteger(gameId)) {
+            sendJson(res, 400, { error: "gameId required" });
+            return;
+          }
+          await prisma.game.update({
+            where: { id: gameId },
+            data: { status, hostedAt: hostedAt || "" },
+          });
+          if (!buildLogBuffer.has(gameId)) buildLogBuffer.set(gameId, []);
+          buildLogBuffer.get(gameId).push("Build complete.");
+          await appendBuildLogAndPublish(gameId, "Build complete.");
+          sendJson(res, 200, { ok: true });
+        } catch (err) {
+          console.error("[build-complete] error:", err);
+          sendJson(res, 500, { error: "Internal server error" });
+        }
+        return;
+      }
+
       await handle(req, res, parsedUrl);
     });
 

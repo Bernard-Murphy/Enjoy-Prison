@@ -58,6 +58,10 @@ export const typeDefs = gql`
     updatedAt: DateTime!
   }
 
+  type PlanChunk {
+    planText: String!
+  }
+
   type ChatMessage {
     id: Int!
     gameId: Int!
@@ -110,6 +114,7 @@ export const typeDefs = gql`
     popularGames(limit: Int): [Game!]!
     recentGames(limit: Int): [Game!]!
     gamePlan(gameId: Int!): GamePlan
+    gameBuildLogs(gameId: Int!): [GameBuildLog!]!
     chatMessages(gameId: Int!): [ChatMessage!]!
     searchGames(query: String!, filters: SearchFilters): SearchResult!
     comments(flavor: String!, contentId: Int!): [Comment!]!
@@ -157,6 +162,7 @@ export const typeDefs = gql`
 
   type Subscription {
     buildLogs(gameId: Int!): GameBuildLog!
+    planChunks(gameId: Int!): PlanChunk!
     chatMessageAdded(gameId: Int!): ChatMessage!
   }
 `;

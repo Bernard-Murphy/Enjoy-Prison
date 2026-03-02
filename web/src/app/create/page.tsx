@@ -107,6 +107,26 @@ const BUILD_GAME_MUTATION = gql`
 const BUILD_LOGS_SUBSCRIPTION = gql`
   subscription BuildLogs($gameId: Int!) {
     buildLogs(gameId: $gameId) {
+      __typename
+      id
+      buildText
+      createdAt
+    }
+  }
+`;
+
+const PLAN_CHUNKS_SUBSCRIPTION = gql`
+  subscription PlanChunks($gameId: Int!) {
+    planChunks(gameId: $gameId) {
+      planText
+    }
+  }
+`;
+
+const GAME_BUILD_LOGS_QUERY = gql`
+  query GameBuildLogs($gameId: Int!) {
+    gameBuildLogs(gameId: $gameId) {
+      __typename
       id
       buildText
       createdAt
@@ -127,6 +147,8 @@ export default function CreatePage() {
   const [planText, setPlanText] = useState("");
   const [activeTab, setActiveTab] = useState("plan");
   const [buildLogLines, setBuildLogLines] = useState<string[]>([]);
+  const [buildLogsFetchFallback, setBuildLogsFetchFallback] = useState<string[]>([]);
+  const [buildLogsStream, setBuildLogsStream] = useState<string[]>([]);
   const [initialPlanReceived, setInitialPlanReceived] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
 
@@ -144,6 +166,14 @@ export default function CreatePage() {
     variables: { gameId: gameId! },
     skip: !gameId,
   });
+  const { data: buildLogsData, refetch: refetchBuildLogs } = useQuery(
+    GAME_BUILD_LOGS_QUERY,
+    {
+      variables: { gameId: gameId! },
+      skip: !gameId,
+      fetchPolicy: "no-cache",
+    },
+  );
   const { data: messagesData, refetch: refetchMessages } = useQuery(
     CHAT_MESSAGES_QUERY,
     { variables: { gameId: gameId! }, skip: !gameId }
@@ -153,8 +183,27 @@ export default function CreatePage() {
     variables: { gameId: gameId! },
     skip: !gameId,
     onData: ({ data }) => {
-      const text = data?.data?.buildLogs?.buildText;
-      if (text) setBuildLogLines((prev) => [...prev, text]);
+      const text = data?.data?.buildLogs?.buildText ?? (data as { buildLogs?: { buildText?: string } })?.buildLogs?.buildText;
+      if (text != null) {
+        setBuildLogLines((prev) => [...prev, text]);
+        refetchBuildLogs();
+      }
+    },
+    onError: () => {
+      // Socket often closes with 1006 after redirect; build logs are shown via polling
+    },
+  });
+
+  useSubscription(PLAN_CHUNKS_SUBSCRIPTION, {
+    variables: { gameId: gameId! },
+    skip: !gameId,
+    onData: ({ data }) => {
+      const chunk =
+        data?.data?.planChunks?.planText ??
+        (data as { planChunks?: { planText?: string } })?.planChunks?.planText;
+      if (chunk != null) {
+        setPlanText((prev) => prev + chunk);
+      }
     },
   });
 
@@ -185,12 +234,75 @@ export default function CreatePage() {
     if (gamePlan?.planText) setPlanText(gamePlan.planText);
   }, [gamePlan?.planText]);
 
+  // Poll build logs whenever user is on Build tab (subscription often closes with 1006, so we rely on polling)
+  useEffect(() => {
+    if (!gameId || activeTab !== "build") return;
+    refetchBuildLogs();
+
+    const queryPayload = {
+      query:
+        "query GameBuildLogs($gameId: Int!) { gameBuildLogs(gameId: $gameId) { id buildText createdAt } }",
+      variables: { gameId },
+      operationName: "GameBuildLogs",
+    };
+
+    const fetchLogs = async () => {
+      try {
+        const res = await fetch("/api/graphql", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(queryPayload),
+        });
+        const json = await res.json();
+        const list = json?.data?.gameBuildLogs;
+        if (Array.isArray(list)) {
+          const lines = list.map((l: { buildText: string }) => l.buildText);
+          setBuildLogsFetchFallback(lines);
+        }
+      } catch (e) {
+        console.warn("[client] buildLogs fetch fallback error:", e);
+      }
+    };
+
+    const fetchBuildLogStream = async () => {
+      try {
+        const res = await fetch(
+          `/api/build-log-stream?gameId=${encodeURIComponent(gameId)}`,
+        );
+        const json = (await res.json()) as { logs?: string[] };
+        const logs = Array.isArray(json?.logs) ? json.logs : [];
+        if (logs.length > 0) {
+          setBuildLogsStream(logs);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    fetchLogs();
+    fetchBuildLogStream();
+    const t = setInterval(() => {
+      refetchBuildLogs();
+      fetchLogs();
+      fetchBuildLogStream();
+    }, 1000);
+    return () => clearInterval(t);
+  }, [gameId, activeTab, refetchBuildLogs]);
+
+  const fromQuery =
+    buildLogsData?.gameBuildLogs?.length
+      ? buildLogsData.gameBuildLogs.map((l: { buildText: string }) => l.buildText)
+      : null;
+  const fromFallback = buildLogsFetchFallback.length > 0 ? buildLogsFetchFallback : null;
+  const fromStream = buildLogsStream.length > 0 ? buildLogsStream : null;
+  const displayBuildLogs = fromQuery ?? fromFallback ?? fromStream ?? buildLogLines;
+
   // Refetch plan and messages periodically after landing with gameId so we pick up the
   // first response if the subscription event was missed (e.g. WebSocket not ready after redirect)
   useEffect(() => {
     if (!gameId || !isPlanning) return;
     const intervalMs = 3000;
-    const maxAttempts = 10;
+    const maxAttempts = 100;
     let attempts = 0;
     const t = setInterval(() => {
       attempts += 1;
@@ -200,6 +312,31 @@ export default function CreatePage() {
     }, intervalMs);
     return () => clearInterval(t);
   }, [gameId, isPlanning, refetchPlan, refetchMessages]);
+
+  // Poll plan stream so we show plan text even when subscription doesn't deliver (e.g. WS 1006)
+  useEffect(() => {
+    if (!gameId || !isPlanning) return;
+    const poll = async () => {
+      try {
+        const res = await fetch(
+          `/api/plan-stream?gameId=${encodeURIComponent(gameId)}`,
+        );
+        const json = (await res.json()) as { planText?: string };
+        const next =
+          typeof json?.planText === "string" ? json.planText : "";
+        if (next.length > 0) {
+          setPlanText((prev) =>
+            next.length > prev.length ? next : prev,
+          );
+        }
+      } catch {
+        // ignore
+      }
+    };
+    poll();
+    const t = setInterval(poll, 1500);
+    return () => clearInterval(t);
+  }, [gameId, isPlanning]);
 
   const handleSend = async () => {
     const text = message.trim();
@@ -252,6 +389,7 @@ export default function CreatePage() {
       .then(() => {
         setActiveTab("build");
         refetchGame();
+        refetchBuildLogs();
       })
       .catch(() => toast.error("Failed to start build."));
   };
@@ -420,20 +558,33 @@ export default function CreatePage() {
             {activeTab === "build" && (
               <motion.div key="build" initial={fade_out} animate={normalize} exit={fade_out_scale_1} transition={transition_fast} className="flex-1 m-4 mt-2 min-h-0 overflow-auto">
                 <AnimatePresence mode="wait">
-                  {buildLogLines.length > 0 ? (
+                  {displayBuildLogs.length > 0 ? (
                     <motion.div key="received" initial={fade_out} animate={normalize} exit={fade_out_scale_1} transition={transition_fast} className="h-full">
                       <Card className="p-4">
                         <pre className="text-sm whitespace-pre-wrap font-mono">
-                          {buildLogLines.length > 0
-                            ? buildLogLines.join("\n")
-                            : building
-                              ? "Build in progress..."
-                              : "Build logs will stream here when you run Build."}
+                          {displayBuildLogs.map((log: string) => (
+                            <motion.span
+                              initial={{
+                                ...fade_out,
+                                width: 0
+                              }}
+                              animate={{
+                                ...normalize,
+                                width: "auto"
+                              }}
+                              exit={fade_out_scale_1}
+                              transition={transition_fast}
+                              key={log}
+                            >
+                              {log}
+                            </motion.span>
+                          ))}
                         </pre>
                       </Card>
                     </motion.div>
                   ) : (
                     <motion.div key="not-received" initial={fade_out} animate={normalize} exit={fade_out_scale_1} transition={transition_fast} className="h-full flex flex-col items-center justify-center">
+                      <h5 className="text-sm mb-4">Building Game. This may take a few minutes.</h5>
                       <Spinner className="mx-auto" />
                     </motion.div>
                   )}

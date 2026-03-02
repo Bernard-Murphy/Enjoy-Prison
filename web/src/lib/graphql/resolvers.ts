@@ -1,16 +1,23 @@
-import { PubSub } from "graphql-subscriptions";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
+import {
+  pubsub,
+  BUILD_LOGS,
+  PLAN_CHUNKS,
+  CHAT_MESSAGE_ADDED,
+  planChunkBuffer,
+  buildLogBuffer,
+} from "../pubsub";
 import bcrypt from "bcryptjs";
 import { signJWT } from "../session";
 import { verifyRecaptcha, isRecaptchaRequired } from "../recaptcha";
-import { fetchPlanFromGameService } from "../game-service-plan";
+import {
+  fetchPlanFromGameService,
+  parsePlanNameAndDescription,
+} from "../game-service-plan";
 import { triggerBuild } from "../game-service-build";
 
-const pubsub = new PubSub();
-
-export const BUILD_LOGS = "BUILD_LOGS";
-export const CHAT_MESSAGE_ADDED = "CHAT_MESSAGE_ADDED";
+export { BUILD_LOGS, CHAT_MESSAGE_ADDED };
 
 export interface Context {
   user: { userId: number } | null;
@@ -129,6 +136,12 @@ export const resolvers = {
     gamePlan: (_: unknown, { gameId }: { gameId: number }) =>
       prisma.gamePlan.findUnique({ where: { gameId } }),
 
+    gameBuildLogs: (_: unknown, { gameId }: { gameId: number }) =>
+      prisma.gameBuildLog.findMany({
+        where: { gameId },
+        orderBy: { createdAt: "asc" },
+      }),
+
     chatMessages: (_: unknown, { gameId }: { gameId: number }) =>
       prisma.chatMessage.findMany({
         where: { gameId },
@@ -183,11 +196,17 @@ export const resolvers = {
       _root: unknown,
       { gameId, planText }: { gameId: number; planText: string },
     ) => {
-      return prisma.gamePlan.upsert({
+      const plan = await prisma.gamePlan.upsert({
         where: { gameId },
         create: { gameId, planText },
         update: { planText },
       });
+      const { title, description } = parsePlanNameAndDescription(planText);
+      await prisma.game.update({
+        where: { id: gameId },
+        data: { title, description },
+      });
+      return plan;
     },
     login: async (
       _root: unknown,
@@ -336,12 +355,26 @@ export const resolvers = {
       // Background: generate initial plan or clarification; only update plan when type is plan
       (async () => {
         try {
-          const result = await fetchPlanFromGameService(message);
+          const webBase = process.env.WEB_APP_URL || "http://localhost:3000";
+          const planLogCallbackUrl = `${webBase.replace(/\/$/, "")}/api/plan-log`;
+          const result = await fetchPlanFromGameService(
+            message,
+            undefined,
+            game.id,
+            planLogCallbackUrl,
+          );
           if (result.type === "plan") {
             await prisma.gamePlan.upsert({
               where: { gameId: game.id },
               create: { gameId: game.id, planText: result.content },
               update: { planText: result.content },
+            });
+            const { title, description } = parsePlanNameAndDescription(
+              result.content,
+            );
+            await prisma.game.update({
+              where: { id: game.id },
+              data: { title, description },
             });
           }
           const assistantMsg = await prisma.chatMessage.create({
@@ -389,15 +422,26 @@ export const resolvers = {
               where: { gameId },
               select: { planText: true },
             });
+            const webBase = process.env.WEB_APP_URL || "http://localhost:3000";
+            const planLogCallbackUrl = `${webBase.replace(/\/$/, "")}/api/plan-log`;
             const result = await fetchPlanFromGameService(
               message,
               existing?.planText ?? undefined,
+              gameId,
+              planLogCallbackUrl,
             );
             if (result.type === "plan") {
               await prisma.gamePlan.upsert({
                 where: { gameId },
                 create: { gameId, planText: result.content },
                 update: { planText: result.content },
+              });
+              const { title, description } = parsePlanNameAndDescription(
+                result.content,
+              );
+              await prisma.game.update({
+                where: { id: gameId },
+                data: { title, description },
               });
             }
             const assistantMsg = await prisma.chatMessage.create({
@@ -438,7 +482,13 @@ export const resolvers = {
       const startLog = await prisma.gameBuildLog.create({
         data: { gameId, buildText: "Build started." },
       });
-      pubsub.publish(`${BUILD_LOGS}:${gameId}`, { buildLogs: startLog });
+      const buildLogsChannel = `${BUILD_LOGS}:${gameId}`;
+      console.log(
+        "[resolvers] buildGame publishing Build started. channel:",
+        buildLogsChannel,
+      );
+      pubsub.publish(buildLogsChannel, { buildLogs: startLog });
+      console.log("[resolvers] buildGame publish done");
 
       const webBase = process.env.WEB_APP_URL || "http://localhost:3000";
       const base = webBase.replace(/\/$/, "");
@@ -560,8 +610,97 @@ export const resolvers = {
 
   Subscription: {
     buildLogs: {
-      subscribe: (_: unknown, { gameId }: { gameId: number }) => {
-        return pubsub.asyncIterator(`${BUILD_LOGS}:${gameId}`);
+      subscribe: async (_: unknown, { gameId }: { gameId: number }) => {
+        const channel = `${BUILD_LOGS}:${gameId}`;
+        const pubsubIterator = pubsub.asyncIterator(channel);
+        const buffer = buildLogBuffer.get(gameId) ?? [];
+        const existing = await prisma.gameBuildLog.findMany({
+          where: { gameId },
+          orderBy: { createdAt: "asc" },
+          select: {
+            id: true,
+            gameId: true,
+            buildText: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        });
+
+        const syntheticLog = (buildText: string) => ({
+          id: 0,
+          gameId,
+          buildText,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        });
+
+        async function* withReplay(): AsyncGenerator<{
+          buildLogs: {
+            id: number;
+            gameId: number;
+            buildText: string;
+            createdAt: Date;
+            updatedAt: Date;
+          };
+        }> {
+          for (const buildText of buffer) {
+            yield { buildLogs: syntheticLog(buildText) };
+          }
+          if (buffer.length === 0 && existing.length > 0) {
+            for (const log of existing) {
+              yield { buildLogs: log };
+            }
+          }
+          while (true) {
+            const next = await pubsubIterator.next();
+            if (next.done) return;
+            yield next.value as {
+              buildLogs: {
+                id: number;
+                gameId: number;
+                buildText: string;
+                createdAt: Date;
+                updatedAt: Date;
+              };
+            };
+          }
+        }
+
+        return withReplay();
+      },
+    },
+    planChunks: {
+      subscribe: async (_: unknown, { gameId }: { gameId: number }) => {
+        const channel = `${PLAN_CHUNKS}:${gameId}`;
+        const pubsubIterator = pubsub.asyncIterator(channel);
+        const buffer = planChunkBuffer.get(gameId) ?? [];
+        const existing = await prisma.gamePlan.findUnique({
+          where: { gameId },
+          select: { planText: true },
+        });
+
+        async function* withReplay(): AsyncGenerator<{
+          planChunks: { planText: string };
+        }> {
+          // Replay buffered chunks so late subscribers get the full stream
+          for (const planText of buffer) {
+            yield { planChunks: { planText } };
+          }
+          // If no buffer but plan already in DB (e.g. finished before subscribe), send once
+          if (buffer.length === 0 && existing?.planText) {
+            yield { planChunks: { planText: existing.planText } };
+          }
+
+          // Forward any newly-published chunks
+          // eslint-disable-next-line no-constant-condition
+          while (true) {
+            const next = await pubsubIterator.next();
+            if (next.done) return;
+            yield next.value as { planChunks: { planText: string } };
+          }
+        }
+
+        return withReplay();
       },
     },
     chatMessageAdded: {
@@ -571,5 +710,3 @@ export const resolvers = {
     },
   },
 };
-
-export { pubsub };

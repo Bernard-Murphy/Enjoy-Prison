@@ -13,6 +13,12 @@ export async function triggerBuild(params: {
     throw new Error("GAME_SERVICE_URL is not set");
   }
   const url = `${base.replace(/\/$/, "")}/api/build`;
+  console.log(
+    "[web] triggerBuild →",
+    url,
+    "logCallbackUrl:",
+    params.logCallbackUrl,
+  );
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
