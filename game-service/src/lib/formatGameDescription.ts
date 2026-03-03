@@ -1,4 +1,4 @@
-import type { GameConfig } from "../dsl/schema";
+import type { GameConfig } from "./dsl/schema";
 
 /**
  * Builds a human-readable markdown description (title, summary, rules, controls)
