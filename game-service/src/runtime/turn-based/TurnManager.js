@@ -8,6 +8,8 @@ var TurnManager = {
   onTurnEnd: null,
   onTurnTimeout: null,
   onAITurn: null,
+  onRemoteTurn: null,
+  onApplyRemoteMove: null,
   isGameOver: false,
 
   init: function (players, timeLimit) {
@@ -37,6 +39,11 @@ var TurnManager = {
   isCurrentPlayerAI: function () {
     var cur = this.getCurrentPlayer();
     return cur && cur.type === "ai";
+  },
+
+  isCurrentPlayerRemote: function () {
+    var cur = this.getCurrentPlayer();
+    return cur && cur.type === "remote";
   },
 
   nextTurn: function (scene) {
@@ -100,6 +107,21 @@ var TurnManager = {
         [],
         this,
       );
+    }
+
+    if (this.isCurrentPlayerRemote() && this.onRemoteTurn) {
+      this.onRemoteTurn(this.getCurrentPlayer(), scene);
+    }
+  },
+
+  /**
+   * Called when a move arrives from the network. Invokes the scene's handler
+   * (e.g. _applyMove). The scene is responsible for applying the move and
+   * then calling nextTurn.
+   */
+  applyRemoteMove: function (scene, moveData) {
+    if (this.onApplyRemoteMove) {
+      this.onApplyRemoteMove(scene, moveData);
     }
   },
 

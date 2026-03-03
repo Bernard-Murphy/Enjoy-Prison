@@ -36,7 +36,66 @@ var TriviaGameScene = new Phaser.Class({
     }
     this._answered = false;
     this._showNext = false;
+    var self = this;
+    TurnManager.onApplyRemoteMove = function (scene, moveData) {
+      scene._applyMove(moveData);
+    };
+    if (typeof MessageBridge !== "undefined") {
+      MessageBridge.init();
+      MessageBridge.on("move", function (payload) {
+        TurnManager.applyRemoteMove(self, payload);
+      });
+    }
     this._loadQuestion();
+  },
+
+  _applyMove: function (moveData) {
+    var answerIndex = moveData.answerIndex;
+    if (this._answered || answerIndex == null) return;
+    this._answered = true;
+    var q = this._currentQuestion;
+    var correctIdx =
+      q._shuffledCorrectIndex != null
+        ? q._shuffledCorrectIndex
+        : q.correctIndex;
+    var correct = answerIndex === correctIdx;
+    var points = correct
+      ? q.points || this._trivia.pointsPerCorrect || 100
+      : this._trivia.pointsPerWrong || 0;
+    var playerIdx = TurnManager.getCurrentPlayer()
+      ? TurnManager.getCurrentPlayer().index
+      : 0;
+    TurnManager.addScore(playerIdx, points);
+    this._scores[playerIdx] = (this._scores[playerIdx] || 0) + points;
+
+    var correctColor = this._trivia.correctColor || "#44aa44";
+    var wrongColor = this._trivia.wrongColor || "#aa4444";
+    this._answerButtons[answerIndex].setFill(
+      correct ? correctColor : wrongColor,
+    );
+    this._answerButtons[correctIdx].setFill(correctColor);
+
+    var self = this;
+    var delay = 1500;
+    if (this._trivia.showExplanation && q.explanation) {
+      delay = 2500;
+      var exp = this.add.text(
+        this._common.viewport.width / 2,
+        this._common.viewport.height - 80,
+        q.explanation,
+        {
+          fontSize: "16px",
+          fill: this._common.secondaryTextColor || "#aaaaaa",
+          wordWrap: { width: this._common.viewport.width - 80 },
+          align: "center",
+        },
+      );
+      exp.setOrigin(0.5);
+    }
+    this.time.delayedCall(delay, function () {
+      self._currentIndex++;
+      self._loadQuestion();
+    });
   },
 
   _loadQuestion: function () {
@@ -133,48 +192,12 @@ var TriviaGameScene = new Phaser.Class({
   },
 
   _onAnswer: function (answerIndex) {
+    if (TurnManager.isCurrentPlayerRemote()) return;
     if (this._answered) return;
-    this._answered = true;
-    var q = this._currentQuestion;
-    var correctIdx =
-      q._shuffledCorrectIndex != null
-        ? q._shuffledCorrectIndex
-        : q.correctIndex;
-    var correct = answerIndex === correctIdx;
-    var points = correct
-      ? q.points || this._trivia.pointsPerCorrect || 100
-      : this._trivia.pointsPerWrong || 0;
-    TurnManager.addScore(0, points);
-    this._scores[0] = (this._scores[0] || 0) + points;
-
-    var correctColor = this._trivia.correctColor || "#44aa44";
-    var wrongColor = this._trivia.wrongColor || "#aa4444";
-    this._answerButtons[answerIndex].setFill(
-      correct ? correctColor : wrongColor,
-    );
-    this._answerButtons[correctIdx].setFill(correctColor);
-
-    var self = this;
-    var delay = 1500;
-    if (this._trivia.showExplanation && q.explanation) {
-      delay = 2500;
-      var exp = this.add.text(
-        this._common.viewport.width / 2,
-        this._common.viewport.height - 80,
-        q.explanation,
-        {
-          fontSize: "16px",
-          fill: this._common.secondaryTextColor || "#aaaaaa",
-          wordWrap: { width: this._common.viewport.width - 80 },
-          align: "center",
-        },
-      );
-      exp.setOrigin(0.5);
+    this._applyMove({ answerIndex: answerIndex });
+    if (typeof MessageBridge !== "undefined") {
+      MessageBridge.send("move", { answerIndex: answerIndex });
     }
-    this.time.delayedCall(delay, function () {
-      self._currentIndex++;
-      self._loadQuestion();
-    });
   },
 
   _endTrivia: function () {

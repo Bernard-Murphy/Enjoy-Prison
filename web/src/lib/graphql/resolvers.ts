@@ -5,9 +5,13 @@ import {
   BUILD_LOGS,
   PLAN_CHUNKS,
   CHAT_MESSAGE_ADDED,
+  SESSION_UPDATED,
+  GAME_MOVE,
+  SIGNAL_MESSAGE,
   planChunkBuffer,
   buildLogBuffer,
 } from "../pubsub";
+import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { signJWT } from "../session";
 import { verifyRecaptcha, isRecaptchaRequired } from "../recaptcha";
@@ -72,6 +76,55 @@ export const resolvers = {
     user: (parent: { userId: number | null }) =>
       parent.userId
         ? prisma.user.findUnique({ where: { id: parent.userId } })
+        : null,
+  },
+
+  GameSession: {
+    game: (parent: { gameId: number }) =>
+      prisma.game.findUnique({ where: { id: parent.gameId } }),
+    host: (parent: { hostId: number | null }) =>
+      parent.hostId
+        ? prisma.user.findUnique({
+            where: { id: parent.hostId },
+            select: {
+              id: true,
+              username: true,
+              displayName: true,
+              avatar: true,
+              email: true,
+              bio: true,
+              role: true,
+              createdAt: true,
+              updatedAt: true,
+            },
+          })
+        : null,
+    players: (parent: { id: number }) =>
+      prisma.gameSessionPlayer.findMany({
+        where: { sessionId: parent.id },
+        orderBy: { playerIndex: "asc" },
+      }),
+    config: (parent: { config: unknown }) =>
+      parent.config != null ? JSON.stringify(parent.config) : null,
+  },
+
+  GameSessionPlayer: {
+    user: (parent: { userId: number | null }) =>
+      parent.userId
+        ? prisma.user.findUnique({
+            where: { id: parent.userId },
+            select: {
+              id: true,
+              username: true,
+              displayName: true,
+              avatar: true,
+              email: true,
+              bio: true,
+              role: true,
+              createdAt: true,
+              updatedAt: true,
+            },
+          })
         : null,
   },
 
@@ -170,6 +223,18 @@ export const resolvers = {
       prisma.comment.findMany({
         where: { flavor, contentId },
         orderBy: { createdAt: "asc" },
+      }),
+
+    session: (_: unknown, { id }: { id: number }) =>
+      prisma.gameSession.findUnique({
+        where: { id },
+        include: { players: { orderBy: { playerIndex: "asc" } } },
+      }),
+
+    sessionByCode: (_: unknown, { code }: { code: string }) =>
+      prisma.gameSession.findUnique({
+        where: { code: code.toUpperCase() },
+        include: { players: { orderBy: { playerIndex: "asc" } } },
       }),
 
     searchGames: async (
@@ -736,6 +801,229 @@ export const resolvers = {
     dismissReport: async () => {
       throw new Error("Not implemented");
     },
+
+    createSession: async (
+      _: unknown,
+      { gameId, mode }: { gameId: number; mode?: string },
+      ctx: Context,
+    ) => {
+      const game = await prisma.game.findFirst({
+        where: { id: gameId, status: "live" },
+      });
+      if (!game) throw new Error("Game not found");
+      const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      let code = "";
+      for (let i = 0; i < 6; i++) {
+        code += chars[crypto.randomInt(0, chars.length)];
+      }
+      const session = await prisma.gameSession.create({
+        data: {
+          code,
+          gameId,
+          hostId: ctx.user?.userId ?? null,
+          status: "waiting",
+          maxPlayers: 2,
+          mode: mode ?? "turn-based",
+        },
+      });
+      await prisma.gameSessionPlayer.create({
+        data: {
+          sessionId: session.id,
+          playerIndex: 0,
+          role: "host",
+          userId: ctx.user?.userId ?? null,
+        },
+      });
+      const full = await prisma.gameSession.findUnique({
+        where: { id: session.id },
+        include: { players: { orderBy: { playerIndex: "asc" } } },
+      });
+      pubsub.publish(`${SESSION_UPDATED}:${session.id}`, {
+        sessionUpdated: full,
+      });
+      return full;
+    },
+
+    joinSession: async (
+      _: unknown,
+      { code }: { code: string },
+      ctx: Context,
+    ) => {
+      const session = await prisma.gameSession.findUnique({
+        where: { code: code.toUpperCase().trim() },
+        include: { players: { orderBy: { playerIndex: "asc" } } },
+      });
+      if (!session) throw new Error("Session not found");
+      if (session.status !== "waiting")
+        throw new Error("Session already started or finished");
+      const count = session.players.length;
+      if (count >= session.maxPlayers) throw new Error("Session is full");
+      await prisma.gameSessionPlayer.create({
+        data: {
+          sessionId: session.id,
+          playerIndex: count,
+          role: "guest",
+          userId: ctx.user?.userId ?? null,
+        },
+      });
+      const full = await prisma.gameSession.findUnique({
+        where: { id: session.id },
+        include: { players: { orderBy: { playerIndex: "asc" } } },
+      });
+      pubsub.publish(`${SESSION_UPDATED}:${session.id}`, {
+        sessionUpdated: full,
+      });
+      return full;
+    },
+
+    leaveSession: async (
+      _: unknown,
+      { sessionId, playerIndex }: { sessionId: number; playerIndex: number },
+    ) => {
+      const session = await prisma.gameSession.findUnique({
+        where: { id: sessionId },
+        include: { players: true },
+      });
+      if (!session) throw new Error("Session not found");
+      const player = session.players.find((p) => p.playerIndex === playerIndex);
+      if (player) {
+        await prisma.gameSessionPlayer.delete({ where: { id: player.id } });
+      }
+      const full = await prisma.gameSession.findUnique({
+        where: { id: sessionId },
+        include: { players: { orderBy: { playerIndex: "asc" } } },
+      });
+      if (full)
+        pubsub.publish(`${SESSION_UPDATED}:${sessionId}`, {
+          sessionUpdated: full,
+        });
+      return true;
+    },
+
+    sessionReady: async (
+      _: unknown,
+      { sessionId }: { sessionId: number },
+      ctx: Context,
+    ) => {
+      const session = await prisma.gameSession.findUnique({
+        where: { id: sessionId },
+        include: { players: { orderBy: { playerIndex: "asc" } } },
+      });
+      if (!session) throw new Error("Session not found");
+      if (session.status !== "waiting")
+        throw new Error("Session already started");
+      const player = session.players.find((p) => p.userId === ctx.user?.userId);
+      if (!player) throw new Error("Not a player in this session");
+      await prisma.gameSessionPlayer.update({
+        where: { id: player.id },
+        data: { ready: true },
+      });
+      const updated = await prisma.gameSession.findUnique({
+        where: { id: sessionId },
+        include: { players: { orderBy: { playerIndex: "asc" } } },
+      });
+      const allReady =
+        updated &&
+        updated.players.length >= 2 &&
+        updated.players.every((p) => p.ready);
+      if (allReady && updated) {
+        const seed = crypto.randomInt(1, 2147483647);
+        await prisma.gameSession.update({
+          where: { id: sessionId },
+          data: {
+            status: "playing",
+            config: {
+              seed,
+              players: updated.players.map((p, i) => ({
+                playerIndex: i,
+                userId: p.userId,
+                role: p.role,
+              })),
+            },
+          },
+        });
+        const full = await prisma.gameSession.findUnique({
+          where: { id: sessionId },
+          include: { players: { orderBy: { playerIndex: "asc" } } },
+        });
+        pubsub.publish(`${SESSION_UPDATED}:${sessionId}`, {
+          sessionUpdated: full,
+        });
+        return full;
+      }
+      pubsub.publish(`${SESSION_UPDATED}:${sessionId}`, {
+        sessionUpdated: updated,
+      });
+      return updated;
+    },
+
+    sendGameMove: async (
+      _: unknown,
+      {
+        sessionId,
+        playerIndex,
+        move,
+        diceRoll,
+      }: {
+        sessionId: number;
+        playerIndex: number;
+        move: string;
+        diceRoll?: number | null;
+      },
+    ) => {
+      const session = await prisma.gameSession.findUnique({
+        where: { id: sessionId },
+      });
+      if (!session) throw new Error("Session not found");
+      if (session.status !== "playing")
+        throw new Error("Session is not in play");
+      let movePayload = move || "{}";
+      const parsed = (() => {
+        try {
+          return JSON.parse(movePayload);
+        } catch {
+          return {};
+        }
+      })();
+      if (diceRoll != null) {
+        parsed.diceRoll = diceRoll;
+      } else if (
+        session.mode === "turn-based" &&
+        (parsed.requestDice === true || movePayload === "{}")
+      ) {
+        parsed.diceRoll = crypto.randomInt(2, 13);
+      }
+      movePayload = JSON.stringify(parsed);
+      const payload = {
+        sessionId,
+        playerIndex,
+        move: movePayload,
+      };
+      pubsub.publish(`${GAME_MOVE}:${sessionId}`, { gameMove: payload });
+      return payload;
+    },
+
+    sendSignalMessage: async (
+      _: unknown,
+      {
+        sessionId,
+        fromPlayerIndex,
+        message,
+      }: { sessionId: number; fromPlayerIndex: number; message: string },
+    ) => {
+      const session = await prisma.gameSession.findUnique({
+        where: { id: sessionId },
+      });
+      if (!session) throw new Error("Session not found");
+      pubsub.publish(`${SIGNAL_MESSAGE}:${sessionId}`, {
+        signalMessage: {
+          sessionId,
+          fromPlayerIndex,
+          message,
+        },
+      });
+      return true;
+    },
   },
 
   Subscription: {
@@ -847,6 +1135,21 @@ export const resolvers = {
     chatMessageAdded: {
       subscribe: (_: unknown, { gameId }: { gameId: number }) => {
         return pubsub.asyncIterator(`${CHAT_MESSAGE_ADDED}:${gameId}`);
+      },
+    },
+    sessionUpdated: {
+      subscribe: (_: unknown, { sessionId }: { sessionId: number }) => {
+        return pubsub.asyncIterator(`${SESSION_UPDATED}:${sessionId}`);
+      },
+    },
+    gameMove: {
+      subscribe: (_: unknown, { sessionId }: { sessionId: number }) => {
+        return pubsub.asyncIterator(`${GAME_MOVE}:${sessionId}`);
+      },
+    },
+    signalMessage: {
+      subscribe: (_: unknown, { sessionId }: { sessionId: number }) => {
+        return pubsub.asyncIterator(`${SIGNAL_MESSAGE}:${sessionId}`);
       },
     },
   },

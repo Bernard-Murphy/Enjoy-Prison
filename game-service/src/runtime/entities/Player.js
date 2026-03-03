@@ -1,10 +1,13 @@
 var PlayerEntity = {
-  create: function (scene) {
+  create: function (scene, playerIndex, isLocal) {
     var config = GameUtils.getConfig();
     var pc = config.player;
     var genre = config.meta.genre;
+    if (playerIndex == null) playerIndex = 0;
+    if (isLocal == null) isLocal = true;
 
-    var player = scene.physics.add.sprite(pc.x, pc.y, "player");
+    var offsetX = playerIndex * 80;
+    var player = scene.physics.add.sprite(pc.x + offsetX, pc.y, "player");
     player.setDisplaySize(pc.width, pc.height);
     player.body.setSize(pc.width, pc.height);
     player.setCollideWorldBounds(true);
@@ -18,6 +21,12 @@ var PlayerEntity = {
     player.isDead = false;
     player.abilities = {};
     player.facingRight = true;
+    player.isLocal = isLocal;
+    player.playerIndex = playerIndex;
+    player.targetX = player.x;
+    player.targetY = player.y;
+    player.targetVX = 0;
+    player.targetVY = 0;
 
     for (var i = 0; i < pc.abilities.length; i++) {
       var ab = pc.abilities[i];
@@ -29,7 +38,7 @@ var PlayerEntity = {
     }
 
     player.handleUpdate = function (cursors, time, delta) {
-      if (player.isDead) return;
+      if (!player.isLocal || player.isDead) return;
 
       var speed = pc.speed;
       if (player.speedBoostUntil && time < player.speedBoostUntil) {
@@ -203,6 +212,24 @@ var PlayerEntity = {
         SoundGenerator.play("gameOver");
         scene.events.emit("gameOver", { won: false, score: player.score });
       });
+    };
+
+    player.applyNetworkState = function (state) {
+      if (state.x != null) player.targetX = state.x;
+      if (state.y != null) player.targetY = state.y;
+      if (state.vx != null) player.targetVX = state.vx;
+      if (state.vy != null) player.targetVY = state.vy;
+      if (state.facing != null) player.facingRight = !!state.facing;
+      if (state.hp != null) player.hp = state.hp;
+      if (state.isDead != null) player.isDead = state.isDead;
+    };
+
+    player.interpolate = function (delta) {
+      var t = Math.min(1, delta * 0.012);
+      player.x += (player.targetX - player.x) * t;
+      player.y += (player.targetY - player.y) * t;
+      player.body.setVelocity(player.targetVX, player.targetVY);
+      player.flipX = !player.facingRight;
     };
 
     return player;

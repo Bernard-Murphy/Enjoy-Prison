@@ -20,6 +20,9 @@ export const pubsub: PubSub =
 export const BUILD_LOGS = "BUILD_LOGS";
 export const PLAN_CHUNKS = "PLAN_CHUNKS";
 export const CHAT_MESSAGE_ADDED = "CHAT_MESSAGE_ADDED";
+export const SESSION_UPDATED = "SESSION_UPDATED";
+export const GAME_MOVE = "GAME_MOVE";
+export const SIGNAL_MESSAGE = "SIGNAL_MESSAGE";
 
 /** Buffered plan chunks per gameId so late subscribers get full replay. */
 export const planChunkBuffer = new Map<number, string[]>();

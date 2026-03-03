@@ -30,6 +30,16 @@ var MemoryGameScene = new Phaser.Class({
     this._totalPairs = (this._rows * this._cols) / 2;
 
     TurnManager.init(common.players || [], 0);
+    var self = this;
+    TurnManager.onApplyRemoteMove = function (scene, moveData) {
+      scene._applyMove(moveData);
+    };
+    if (typeof MessageBridge !== "undefined") {
+      MessageBridge.init();
+      MessageBridge.on("move", function (payload) {
+        TurnManager.applyRemoteMove(self, payload);
+      });
+    }
     this._currentPlayerIndex = 0;
     this._flippedThisTurn = [];
     this._blockInput = false;
@@ -179,16 +189,22 @@ var MemoryGameScene = new Phaser.Class({
   },
 
   _updateTurnIndicator: function () {
+    if (!this._turnText) return;
+    if (TurnManager.isCurrentPlayerRemote()) {
+      this._turnText.setText("Waiting for opponent...");
+      this._turnText.setFill(this._common.secondaryTextColor || "#aaaaaa");
+      return;
+    }
     var cur = TurnManager.getCurrentPlayer();
-    if (cur && this._turnText) {
+    if (cur) {
       this._turnText.setText(cur.name + "'s turn");
       this._turnText.setFill(cur.color || "#ffffff");
     }
   },
 
-  _onCardClick: function (key) {
-    if (this._blockInput) return;
-    if (this._flipped[key]) return;
+  _applyMove: function (moveData) {
+    var key = moveData.cardIndex;
+    if (!key || this._blockInput || this._flipped[key]) return;
     var card = this._cards[key];
     if (!card) return;
 
@@ -231,6 +247,14 @@ var MemoryGameScene = new Phaser.Class({
           self._blockInput = false;
         });
       }
+    }
+  },
+
+  _onCardClick: function (key) {
+    if (TurnManager.isCurrentPlayerRemote()) return;
+    this._applyMove({ cardIndex: key });
+    if (typeof MessageBridge !== "undefined") {
+      MessageBridge.send("move", { cardIndex: key });
     }
   },
 

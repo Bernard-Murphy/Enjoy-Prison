@@ -97,6 +97,15 @@ var GridGameScene = new Phaser.Class({
     TurnManager.onAITurn = function (player, scene) {
       self._doAIMove();
     };
+    TurnManager.onApplyRemoteMove = function (scene, moveData) {
+      scene._applyMove(moveData);
+    };
+    if (typeof MessageBridge !== "undefined") {
+      MessageBridge.init();
+      MessageBridge.on("move", function (payload) {
+        TurnManager.applyRemoteMove(self, payload);
+      });
+    }
 
     this._updateTurnIndicator();
     if (common.showTurnIndicator) {
@@ -120,7 +129,13 @@ var GridGameScene = new Phaser.Class({
 
   _updateTurnIndicator: function () {
     var common = this._common;
-    if (this._turnText && TurnManager.getCurrentPlayer()) {
+    if (!this._turnText) return;
+    if (TurnManager.isCurrentPlayerRemote()) {
+      this._turnText.setText("Waiting for opponent...");
+      this._turnText.setFill(common.secondaryTextColor || "#aaaaaa");
+      return;
+    }
+    if (TurnManager.getCurrentPlayer()) {
       var msg = (common.turnStartMessage || "{player}'s turn").replace(
         "{player}",
         TurnManager.getCurrentPlayer().name,
@@ -145,24 +160,32 @@ var GridGameScene = new Phaser.Class({
     return true;
   },
 
+  _applyMove: function (moveData) {
+    var row = moveData.row;
+    var col = moveData.col;
+    if (row == null || col == null) return;
+    if (!this._isValidMove(row, col)) return;
+    var self = this;
+    this._placePiece(row, col, TurnManager.getCurrentPlayer(), function () {
+      var result = self._checkGameOver();
+      if (result) {
+        self._endGame(result);
+      } else {
+        TurnManager.nextTurn(self);
+      }
+    });
+  },
+
   _onCellClick: function (row, col) {
     if (TurnManager.isGameOver) return;
     if (TurnManager.isCurrentPlayerAI()) return;
+    if (TurnManager.isCurrentPlayerRemote()) return;
     if (!this._isValidMove(row, col)) return;
 
-    this._placePiece(
-      row,
-      col,
-      TurnManager.getCurrentPlayer(),
-      function () {
-        var result = this._checkGameOver();
-        if (result) {
-          this._endGame(result);
-        } else {
-          TurnManager.nextTurn(this);
-        }
-      }.bind(this),
-    );
+    this._applyMove({ row: row, col: col });
+    if (typeof MessageBridge !== "undefined") {
+      MessageBridge.send("move", { row: row, col: col });
+    }
   },
 
   _placePiece: function (row, col, player, onComplete) {
@@ -343,15 +366,7 @@ var GridGameScene = new Phaser.Class({
       TurnManager.nextTurn(this);
       return;
     }
-    var self = this;
-    this._placePiece(move.row, move.col, player, function () {
-      var result = self._checkGameOver();
-      if (result) {
-        self._endGame(result);
-      } else {
-        TurnManager.nextTurn(self);
-      }
-    });
+    this._applyMove({ row: move.row, col: move.col });
   },
 
   _endGame: function (result) {

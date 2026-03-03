@@ -30,6 +30,16 @@ var CardGameScene = new Phaser.Class({
     deck = DeckBuilder.shuffle(deck);
 
     TurnManager.init(common.players || [], 0);
+    var self = this;
+    TurnManager.onApplyRemoteMove = function (scene, moveData) {
+      scene._applyMove(moveData);
+    };
+    if (typeof MessageBridge !== "undefined") {
+      MessageBridge.init();
+      MessageBridge.on("move", function (payload) {
+        TurnManager.applyRemoteMove(self, payload);
+      });
+    }
     var playerCount = Math.max(1, (common.players || []).length);
     var cardsPerPlayer = cardConfig.cardsPerPlayer || 7;
     if (this._subType === "war") {
@@ -93,8 +103,25 @@ var CardGameScene = new Phaser.Class({
     this._warButton.setOrigin(0.5);
     this._warButton.setInteractive({ useHandCursor: true });
     this._warButton.on("pointerdown", function () {
-      self._warPlay();
+      if (TurnManager.isCurrentPlayerRemote()) return;
+      self._applyMove({ action: "warPlay" });
+      if (typeof MessageBridge !== "undefined") {
+        MessageBridge.send("move", { action: "warPlay" });
+      }
     });
+  },
+
+  _applyMove: function (moveData) {
+    var action = moveData && moveData.action;
+    if (action === "warPlay" && this._subType === "war") {
+      this._warPlay();
+    } else if (action === "draw" && this._subType === "shedding") {
+      if (this._drawPile.length > 0) {
+        var card = this._drawPile.pop();
+        this._hands[0].push(card);
+        TurnManager.nextTurn(this);
+      }
+    }
   },
 
   _renderHand: function (playerIndex, hand, y) {
@@ -126,6 +153,7 @@ var CardGameScene = new Phaser.Class({
   },
 
   _warPlay: function () {
+    if (TurnManager.isCurrentPlayerRemote()) return;
     if (
       this._hands[0].length === 0 ||
       (this._hands[1] && this._hands[1].length === 0)
@@ -214,10 +242,12 @@ var CardGameScene = new Phaser.Class({
     drawBtn.setOrigin(0.5);
     drawBtn.setInteractive({ useHandCursor: true });
     drawBtn.on("pointerdown", function () {
+      if (TurnManager.isCurrentPlayerRemote()) return;
       if (self._drawPile.length > 0) {
-        var card = self._drawPile.pop();
-        self._hands[0].push(card);
-        TurnManager.nextTurn(self);
+        self._applyMove({ action: "draw" });
+        if (typeof MessageBridge !== "undefined") {
+          MessageBridge.send("move", { action: "draw" });
+        }
       }
     });
   },

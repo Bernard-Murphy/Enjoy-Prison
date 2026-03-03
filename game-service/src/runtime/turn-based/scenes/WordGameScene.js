@@ -19,10 +19,26 @@ var WordGameScene = new Phaser.Class({
     this._wordConfig = wordConfig;
     this._subType = subType;
 
+    var self = this;
+    TurnManager.onApplyRemoteMove = function (scene, moveData) {
+      scene._applyMove(moveData);
+    };
+    if (typeof MessageBridge !== "undefined") {
+      MessageBridge.init();
+      MessageBridge.on("move", function (payload) {
+        TurnManager.applyRemoteMove(self, payload);
+      });
+    }
     if (subType === "hangman") {
       this._initHangman(w, h);
     } else {
       this._initWordle(w, h);
+    }
+  },
+
+  _applyMove: function (moveData) {
+    if (this._subType === "hangman" && moveData.letter) {
+      this._guessLetter(moveData.letter);
     }
   },
 
@@ -183,7 +199,10 @@ var WordGameScene = new Phaser.Class({
           var self = this;
           var l = letter;
           t.on("pointerdown", function () {
-            self._guessLetter(l);
+            self._applyMove({ letter: l });
+            if (typeof MessageBridge !== "undefined") {
+              MessageBridge.send("move", { letter: l });
+            }
           });
         }
         this._letterButtons.push(t);

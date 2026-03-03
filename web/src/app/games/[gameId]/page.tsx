@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { gql, useQuery, useMutation } from "@apollo/client";
+import { gql, useQuery, useMutation, useSubscription } from "@apollo/client";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
@@ -16,8 +16,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Fullscreen, GitBranch, Flag, Trash2, Pencil, Archive, ArchiveRestore } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Fullscreen, GitBranch, Flag, Trash2, Pencil, Archive, ArchiveRestore, Users } from "lucide-react";
 import { toast } from "sonner";
+import { useWebRTC } from "@/lib/hooks/useWebRTC";
 
 const GAME_QUERY = gql`
   query GamePage($id: Int!) {
@@ -70,6 +72,80 @@ const UNARCHIVE_VERSION_MUTATION = gql`
   }
 `;
 
+const CREATE_SESSION_MUTATION = gql`
+  mutation CreateSession($gameId: Int!, $mode: String) {
+    createSession(gameId: $gameId, mode: $mode) {
+      id
+      code
+      status
+      mode
+      players { id playerIndex role ready }
+    }
+  }
+`;
+
+const JOIN_SESSION_MUTATION = gql`
+  mutation JoinSession($code: String!) {
+    joinSession(code: $code) {
+      id
+      code
+      status
+      mode
+      players { id playerIndex role ready }
+    }
+  }
+`;
+
+const SESSION_READY_MUTATION = gql`
+  mutation SessionReady($sessionId: Int!) {
+    sessionReady(sessionId: $sessionId) {
+      id
+      code
+      status
+      config
+      players { id playerIndex role ready }
+    }
+  }
+`;
+
+const LEAVE_SESSION_MUTATION = gql`
+  mutation LeaveSession($sessionId: Int!, $playerIndex: Int!) {
+    leaveSession(sessionId: $sessionId, playerIndex: $playerIndex)
+  }
+`;
+
+const SEND_GAME_MOVE_MUTATION = gql`
+  mutation SendGameMove($sessionId: Int!, $playerIndex: Int!, $move: String!, $diceRoll: Int) {
+    sendGameMove(sessionId: $sessionId, playerIndex: $playerIndex, move: $move, diceRoll: $diceRoll) {
+      sessionId
+      playerIndex
+      move
+    }
+  }
+`;
+
+const SESSION_UPDATED_SUBSCRIPTION = gql`
+  subscription SessionUpdated($sessionId: Int!) {
+    sessionUpdated(sessionId: $sessionId) {
+      id
+      code
+      status
+      config
+      players { id playerIndex role ready }
+    }
+  }
+`;
+
+const GAME_MOVE_SUBSCRIPTION = gql`
+  subscription GameMove($sessionId: Int!) {
+    gameMove(sessionId: $sessionId) {
+      sessionId
+      playerIndex
+      move
+    }
+  }
+`;
+
 type GameVersion = {
   id: number;
   hostedAt: string;
@@ -86,6 +162,17 @@ export default function GamePage() {
   const [reportOpen, setReportOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState<number | null>(null);
+  const [multiplayerSession, setMultiplayerSession] = useState<{
+    id: number;
+    code: string;
+    status: string;
+    mode: string;
+    config?: { seed?: number; players?: { playerIndex: number; role: string; name?: string }[] };
+    players: { id?: number; playerIndex: number; role: string; ready?: boolean }[];
+  } | null>(null);
+  const [localPlayerIndex, setLocalPlayerIndex] = useState(0);
+  const [joinCodeInput, setJoinCodeInput] = useState("");
+  const [showJoinInput, setShowJoinInput] = useState(false);
 
   const { data, refetch } = useQuery(GAME_QUERY, {
     variables: { id: gameId },
@@ -98,6 +185,128 @@ export default function GamePage() {
   const [unarchiveVersion] = useMutation(UNARCHIVE_VERSION_MUTATION, {
     onCompleted: () => refetch(),
   });
+  const [createSession] = useMutation(CREATE_SESSION_MUTATION, {
+    onCompleted: (d: { createSession: { id: number; code: string; status: string; mode: string; players: { id?: number; playerIndex: number; role: string; ready?: boolean }[] } }) => {
+      setMultiplayerSession(d.createSession);
+      setLocalPlayerIndex(0);
+    },
+    onError: () => toast.error("Failed to create session"),
+  });
+  const [joinSession] = useMutation(JOIN_SESSION_MUTATION, {
+    onCompleted: (d: { joinSession: { id: number; code: string; status: string; mode: string; players: { id?: number; playerIndex: number; role: string; ready?: boolean }[] } }) => {
+      setMultiplayerSession(d.joinSession);
+      const me = d.joinSession.players.length - 1;
+      setLocalPlayerIndex(me);
+      setJoinCodeInput("");
+      setShowJoinInput(false);
+    },
+    onError: () => toast.error("Failed to join session"),
+  });
+  const [sessionReady] = useMutation(SESSION_READY_MUTATION);
+  const [leaveSession] = useMutation(LEAVE_SESSION_MUTATION, {
+    onCompleted: () => setMultiplayerSession(null),
+  });
+  const [sendGameMove] = useMutation(SEND_GAME_MOVE_MUTATION);
+
+  const [disconnectMessage, setDisconnectMessage] = useState<string | null>(null);
+
+  useSubscription(SESSION_UPDATED_SUBSCRIPTION, {
+    variables: { sessionId: multiplayerSession?.id ?? 0 },
+    skip: multiplayerSession?.id == null,
+    onData: ({ data: subData }) => {
+      const session = subData?.data?.sessionUpdated;
+      if (!session) return;
+      setMultiplayerSession(session);
+      if (session.status === "playing" && (session.players?.length ?? 0) < 2) {
+        setDisconnectMessage("Opponent disconnected.");
+      } else {
+        setDisconnectMessage(null);
+      }
+      if (session.status === "playing" && session.config && iframeRef.current?.contentWindow) {
+        const config = session.config as { seed?: number; players?: { playerIndex: number; role: string; name?: string }[] };
+        const players = (config.players || session.players || []).map((p: { playerIndex: number; role: string }, i: number) => ({
+          name: "Player " + (i + 1),
+          type: i === localPlayerIndex ? "human" : "remote",
+          color: i === 0 ? "#4488ff" : "#ff8844",
+          symbol: i === 0 ? "X" : "O",
+        }));
+        iframeRef.current.contentWindow.postMessage(
+          { type: "start", payload: { seed: config.seed, players, localPlayerIndex } },
+          "*"
+        );
+      }
+    },
+  });
+
+  useSubscription(GAME_MOVE_SUBSCRIPTION, {
+    variables: { sessionId: multiplayerSession?.id ?? 0 },
+    skip: multiplayerSession?.id == null || multiplayerSession?.mode !== "turn-based",
+    onData: ({ data: subData }) => {
+      const move = subData?.data?.gameMove;
+      if (!move || !iframeRef.current?.contentWindow) return;
+      try {
+        const payload = typeof move.move === "string" ? JSON.parse(move.move) : move.move;
+        iframeRef.current.contentWindow.postMessage({ type: "move", payload }, "*");
+      } catch {
+        iframeRef.current.contentWindow.postMessage({ type: "move", payload: move.move }, "*");
+      }
+    },
+  });
+
+  const webrtcConnectedRef = useRef(false);
+  const webrtc = useWebRTC(
+    multiplayerSession?.id ?? null,
+    localPlayerIndex,
+    multiplayerSession?.mode === "action"
+      ? {
+        onMessage: (data) => {
+          try {
+            const msg = JSON.parse(data);
+            if (iframeRef.current?.contentWindow) {
+              iframeRef.current.contentWindow.postMessage({ type: msg.type, payload: msg.payload ?? msg }, "*");
+            }
+          } catch {
+            if (iframeRef.current?.contentWindow) {
+              iframeRef.current.contentWindow.postMessage({ type: "playerState", payload: data }, "*");
+            }
+          }
+        },
+      }
+      : undefined
+  );
+  useEffect(() => {
+    if (multiplayerSession?.mode === "action" && webrtcConnectedRef.current && !webrtc.connected) {
+      setDisconnectMessage("Connection lost.");
+    }
+    if (multiplayerSession?.mode === "action") webrtcConnectedRef.current = webrtc.connected;
+  }, [multiplayerSession?.mode, webrtc.connected]);
+
+  useEffect(() => {
+    if (!iframeRef.current?.contentWindow || !multiplayerSession?.id) return;
+    const win = iframeRef.current.contentWindow;
+    const handler = (e: MessageEvent) => {
+      const msg = e.data;
+      if (!msg || typeof msg.type !== "string") return;
+      if (multiplayerSession.mode === "turn-based") {
+        if (msg.type === "move") {
+          sendGameMove({
+            variables: {
+              sessionId: multiplayerSession.id,
+              playerIndex: localPlayerIndex,
+              move: typeof msg.payload === "string" ? msg.payload : JSON.stringify(msg.payload || {}),
+              diceRoll: msg.payload?.diceRoll ?? (msg.payload?.requestDice ? undefined : undefined),
+            },
+          });
+        }
+      } else if (multiplayerSession.mode === "action" && webrtc.connected) {
+        if (msg.type === "playerState" || msg.type === "worldState") {
+          webrtc.send(JSON.stringify({ type: msg.type, payload: msg.payload }));
+        }
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [multiplayerSession?.id, multiplayerSession?.mode, localPlayerIndex, sendGameMove, webrtc.connected, webrtc.send]);
 
   const game = data?.game;
   const me = data?.me;
@@ -194,6 +403,16 @@ export default function GamePage() {
               Update
             </Button>
           )}
+          {game.status === "live" && displayedHostedAt && !multiplayerSession && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => createSession({ variables: { gameId, mode: "turn-based" } })}
+            >
+              <Users className="h-4 w-4 mr-1" />
+              Play Multiplayer
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={handleFullscreen}>
             <Fullscreen className="h-4 w-4 mr-1" />
             Fullscreen
@@ -255,6 +474,67 @@ export default function GamePage() {
                 Archive
               </Button>
             ))}
+        </div>
+      )}
+
+      {disconnectMessage && (
+        <div className="rounded-lg border border-amber-500/50 p-3 mb-4 bg-amber-500/10 text-amber-700 dark:text-amber-400">
+          {disconnectMessage}
+        </div>
+      )}
+
+      {multiplayerSession && (
+        <div className="rounded-lg border p-4 bg-muted/30 mb-4 flex flex-wrap items-center gap-4">
+          <span className="font-medium">Room: {multiplayerSession.code}</span>
+          <span className="text-sm text-muted-foreground">
+            Players: {multiplayerSession.players?.length ?? 0}/2
+            {multiplayerSession.players?.map((p) => ` P${p.playerIndex + 1}${p.ready ? " ✓" : ""}`)}
+          </span>
+          {multiplayerSession.status === "waiting" && (
+            <Button
+              size="sm"
+              onClick={() =>
+                sessionReady({ variables: { sessionId: multiplayerSession.id } }).then(() => toast.success("Ready!")).catch(() => toast.error("Failed"))
+              }
+            >
+              I&apos;m Ready
+            </Button>
+          )}
+          {multiplayerSession.status === "waiting" && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                leaveSession({
+                  variables: { sessionId: multiplayerSession.id, playerIndex: localPlayerIndex },
+                })
+              }
+            >
+              Leave
+            </Button>
+          )}
+        </div>
+      )}
+
+      {!multiplayerSession && game.status === "live" && displayedHostedAt && (
+        <div className="flex flex-wrap items-center gap-2 mb-2">
+          <Button variant="outline" size="sm" onClick={() => setShowJoinInput(!showJoinInput)}>
+            Join with code
+          </Button>
+          {showJoinInput && (
+            <>
+              <Input
+                className="w-32"
+                placeholder="Code"
+                value={joinCodeInput}
+                onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase())}
+                maxLength={6}
+              />
+              <Button size="sm" onClick={() => joinSession({ variables: { code: joinCodeInput.trim() } })}>
+                Join
+              </Button>
+            </>
+          )}
         </div>
       )}
 

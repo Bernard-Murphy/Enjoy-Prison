@@ -6,7 +6,40 @@ var GameScene = new Phaser.Class({
 
   create: function () {
     var config = GameUtils.getConfig();
-    this.player = PlayerEntity.create(this);
+    var mp = config.multiplayer || {};
+    this._isMultiplayer =
+      mp.enabled &&
+      typeof NetworkBridge !== "undefined" &&
+      window.MULTIPLAYER_CONFIG;
+
+    if (this._isMultiplayer) {
+      var localIdx = NetworkBridge.localPlayerIndex ?? 0;
+      NetworkBridge.init({
+        role: localIdx === 0 ? "host" : "guest",
+        localPlayerIndex: localIdx,
+      });
+      this.players = [];
+      for (var pi = 0; pi < 2; pi++) {
+        this.players.push(PlayerEntity.create(this, pi, pi === localIdx));
+      }
+      this.player = this.players[localIdx];
+      this.localPlayer = this.player;
+      this._lastRemoteState = null;
+      this._lastWorldState = null;
+      this._stateSendTick = 0;
+      var self = this;
+      NetworkBridge.onPlayerState(function (state) {
+        self._lastRemoteState = state;
+      });
+      NetworkBridge.onWorldState(function (ws) {
+        self._lastWorldState = ws;
+      });
+    } else {
+      this.player = PlayerEntity.create(this);
+      this.localPlayer = this.player;
+      this.players = [this.player];
+    }
+
     this.enemies = this.add.group();
     this.collectibles = this.add.group();
     this.platforms = this.add.group();
@@ -84,47 +117,40 @@ var GameScene = new Phaser.Class({
     this.action2 = this.input.keyboard.addKey(controls.action2 || "KeyZ");
     this.pauseKey = this.input.keyboard.addKey(controls.pause || "Escape");
 
-    this.physics.add.collider(this.player, this.platforms);
-    this.physics.add.overlap(
-      this.player,
-      this.enemies,
-      this._playerHitEnemy,
-      null,
-      this,
-    );
-    this.physics.add.overlap(
-      this.player,
-      this.collectibles,
-      this._playerHitCollectible,
-      null,
-      this,
-    );
-    this.physics.add.collider(this.enemies, this.platforms);
-
-    this.physics.add.overlap(
-      this.projectiles,
-      this.enemies,
-      this._projectileHitEnemy,
-      null,
-      this,
-    );
-    this.physics.add.overlap(
-      this.projectiles,
-      this.player,
-      this._projectileHitPlayer,
-      null,
-      this,
-    );
-
-    if (this.winZone) {
+    for (var pi = 0; pi < this.players.length; pi++) {
+      this.physics.add.collider(this.players[pi], this.platforms);
       this.physics.add.overlap(
-        this.player,
-        this.winZone,
-        this._playerReachWin,
+        this.players[pi],
+        this.enemies,
+        this._playerHitEnemy,
         null,
         this,
       );
+      this.physics.add.overlap(
+        this.players[pi],
+        this.collectibles,
+        this._playerHitCollectible,
+        null,
+        this,
+      );
+      this.physics.add.overlap(
+        this.projectiles,
+        this.players[pi],
+        this._projectileHitPlayer,
+        null,
+        this,
+      );
+      if (this.winZone) {
+        this.physics.add.overlap(
+          this.players[pi],
+          this.winZone,
+          this._playerReachWin,
+          null,
+          this,
+        );
+      }
     }
+    this.physics.add.collider(this.enemies, this.platforms);
 
     this.events.on("playerShoot", this._spawnPlayerProjectile, this);
     this.events.on("enemyShoot", this._spawnEnemyProjectile, this);
@@ -132,7 +158,7 @@ var GameScene = new Phaser.Class({
     this.events.on("gameOver", this._onGameOver, this);
 
     if (config.meta.cameraFollow) {
-      this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+      this.cameras.main.startFollow(this.localPlayer, true, 0.1, 0.1);
     }
     this.physics.world.setBounds(
       0,
@@ -147,7 +173,10 @@ var GameScene = new Phaser.Class({
       config.meta.worldBounds.height,
     );
 
-    this.scene.launch("HUDScene", { player: this.player });
+    this.scene.launch("HUDScene", {
+      player: this.localPlayer,
+      players: this.players,
+    });
 
     this.spawners = config.spawners || [];
     this.spawnerTimers = [];
@@ -254,79 +283,167 @@ var GameScene = new Phaser.Class({
 
   update: function (time, delta) {
     var config = GameUtils.getConfig();
-    this.player.handleUpdate(this.cursors, time, delta);
 
-    if (this.action1 && Phaser.Input.Keyboard.JustDown(this.action1)) {
-      var ab = config.player.abilities;
-      for (var i = 0; i < ab.length; i++) {
-        if (ab[i].trigger === "action1")
-          this.player.executeAbility(ab[i].type, this);
+    if (this._isMultiplayer) {
+      this.localPlayer.handleUpdate(this.cursors, time, delta);
+      if (this.action1 && Phaser.Input.Keyboard.JustDown(this.action1)) {
+        var ab = config.player.abilities;
+        for (var i = 0; i < ab.length; i++) {
+          if (ab[i].trigger === "action1")
+            this.localPlayer.executeAbility(ab[i].type, this);
+        }
+      }
+      if (this.action2 && Phaser.Input.Keyboard.JustDown(this.action2)) {
+        var ab2 = config.player.abilities;
+        for (var j = 0; j < ab2.length; j++) {
+          if (ab2[j].trigger === "action2")
+            this.localPlayer.executeAbility(ab2[j].type, this);
+        }
+      }
+      this._stateSendTick++;
+      if (this._stateSendTick >= 3) {
+        this._stateSendTick = 0;
+        NetworkBridge.sendPlayerState({
+          x: this.localPlayer.x,
+          y: this.localPlayer.y,
+          vx: this.localPlayer.body.velocity.x,
+          vy: this.localPlayer.body.velocity.y,
+          facing: this.localPlayer.facingRight,
+          hp: this.localPlayer.hp,
+          isDead: this.localPlayer.isDead,
+        });
+      }
+      var remotePlayer = this.players[1 - NetworkBridge.localPlayerIndex];
+      if (remotePlayer && this._lastRemoteState) {
+        remotePlayer.applyNetworkState(this._lastRemoteState);
+        remotePlayer.interpolate(delta);
+      }
+      if (NetworkBridge.role === "host") {
+        this.enemies.getChildren().forEach(function (enemy) {
+          if (enemy.update) enemy.update(time, delta, this.localPlayer);
+        }, this);
+        for (var m = 0; m < this.movingPlatforms.length; m++) {
+          PlatformEntity.updateMoving(this.movingPlatforms[m], this);
+        }
+        this.projectiles.getChildren().forEach(function (proj) {
+          if (this.game.getTime() - proj.spawnTime > proj.lifetime) {
+            proj.destroy();
+          }
+        }, this);
+        var enemyChildren = this.enemies.getChildren();
+        var projChildren = this.projectiles.getChildren();
+        var worldState = {
+          enemies: enemyChildren.map(function (e) {
+            return {
+              x: e.x,
+              y: e.y,
+              vx: e.body.velocity.x,
+              vy: e.body.velocity.y,
+              hp: e.hp,
+              isDead: e.isDead,
+            };
+          }),
+          projectiles: projChildren.map(function (p) {
+            return {
+              x: p.x,
+              y: p.y,
+              vx: p.body.velocity.x,
+              vy: p.body.velocity.y,
+            };
+          }),
+        };
+        NetworkBridge.sendWorldState(worldState);
+      } else if (this._lastWorldState) {
+        var ens = this._lastWorldState.enemies || [];
+        var enemyList = this.enemies.getChildren();
+        for (var ei = 0; ei < ens.length && ei < enemyList.length; ei++) {
+          var en = enemyList[ei];
+          en.setPosition(ens[ei].x, ens[ei].y);
+          en.body.setVelocity(ens[ei].vx || 0, ens[ei].vy || 0);
+          if (ens[ei].hp != null) en.hp = ens[ei].hp;
+          if (ens[ei].isDead != null) en.isDead = ens[ei].isDead;
+        }
+        var prs = this._lastWorldState.projectiles || [];
+        var projList = this.projectiles.getChildren();
+        for (var pj = 0; pj < prs.length; pj++) {
+          if (pj < projList.length) {
+            projList[pj].setPosition(prs[pj].x, prs[pj].y);
+            projList[pj].body.setVelocity(prs[pj].vx || 0, prs[pj].vy || 0);
+          }
+        }
+      }
+    } else {
+      this.player.handleUpdate(this.cursors, time, delta);
+      if (this.action1 && Phaser.Input.Keyboard.JustDown(this.action1)) {
+        var ab = config.player.abilities;
+        for (var i = 0; i < ab.length; i++) {
+          if (ab[i].trigger === "action1")
+            this.player.executeAbility(ab[i].type, this);
+        }
+      }
+      if (this.action2 && Phaser.Input.Keyboard.JustDown(this.action2)) {
+        var ab2 = config.player.abilities;
+        for (var j = 0; j < ab2.length; j++) {
+          if (ab2[j].trigger === "action2")
+            this.player.executeAbility(ab2[j].type, this);
+        }
+      }
+      this.enemies.getChildren().forEach(function (enemy) {
+        if (enemy.update) enemy.update(time, delta, this.player);
+      }, this);
+      for (var m = 0; m < this.movingPlatforms.length; m++) {
+        PlatformEntity.updateMoving(this.movingPlatforms[m], this);
+      }
+      this.projectiles.getChildren().forEach(function (proj) {
+        if (this.game.getTime() - proj.spawnTime > proj.lifetime) {
+          proj.destroy();
+        }
+      }, this);
+      for (var s = 0; s < this.spawners.length; s++) {
+        var sp = this.spawners[s];
+        var st = this.spawnerTimers[s];
+        if (!st) continue;
+        if (time < st.nextSpawn) continue;
+        var template = config.enemies.find(function (e) {
+          return e.name === sp.enemyName;
+        });
+        if (!template) continue;
+        var active = this.enemies.getChildren().length;
+        if (sp.maxActive && active >= sp.maxActive) continue;
+        if (sp.totalSpawns && st.count >= sp.totalSpawns) continue;
+        var sx = sp.x + (Math.random() * 2 - 1) * (sp.spawnRadius || 50);
+        var sy = sp.y;
+        var idx = config.enemies.indexOf(template);
+        var newEnemy = EnemyEntity.create(this, template, idx);
+        newEnemy.setPosition(sx, sy);
+        this.enemies.add(newEnemy);
+        st.count++;
+        st.nextSpawn = time + (sp.interval || 3000);
       }
     }
-    if (this.action2 && Phaser.Input.Keyboard.JustDown(this.action2)) {
-      var ab2 = config.player.abilities;
-      for (var j = 0; j < ab2.length; j++) {
-        if (ab2[j].trigger === "action2")
-          this.player.executeAbility(ab2[j].type, this);
-      }
-    }
+
     if (this.pauseKey && Phaser.Input.Keyboard.JustDown(this.pauseKey)) {
       this.scene.launch("PauseScene");
       this.scene.pause();
     }
 
-    this.enemies.getChildren().forEach(function (enemy) {
-      if (enemy.update) enemy.update(time, delta, this.player);
-    }, this);
-
-    for (var m = 0; m < this.movingPlatforms.length; m++) {
-      PlatformEntity.updateMoving(this.movingPlatforms[m], this);
-    }
-
-    this.projectiles.getChildren().forEach(function (proj) {
-      if (this.game.getTime() - proj.spawnTime > proj.lifetime) {
-        proj.destroy();
-      }
-    }, this);
-
+    var checkPlayer = this.localPlayer || this.player;
     if (
       this.winCondition.type === "score" &&
-      this.player.score >= this.winCondition.value
+      checkPlayer.score >= this.winCondition.value
     ) {
-      this.events.emit("gameOver", { won: true, score: this.player.score });
+      this.events.emit("gameOver", { won: true, score: checkPlayer.score });
     }
     if (this.winCondition.type === "survive-time") {
       if ((time - this.startTime) / 1000 >= this.winCondition.value) {
-        this.events.emit("gameOver", { won: true, score: this.player.score });
+        this.events.emit("gameOver", { won: true, score: checkPlayer.score });
       }
     }
     if (this.loseCondition.type === "fall-off-screen") {
       var wb = config.meta.worldBounds;
-      if (this.player.y > wb.height + 100) {
-        this.player.die(this);
+      if (checkPlayer.y > wb.height + 100) {
+        checkPlayer.die(this);
       }
-    }
-
-    for (var s = 0; s < this.spawners.length; s++) {
-      var sp = this.spawners[s];
-      var st = this.spawnerTimers[s];
-      if (!st) continue;
-      if (time < st.nextSpawn) continue;
-      var template = config.enemies.find(function (e) {
-        return e.name === sp.enemyName;
-      });
-      if (!template) continue;
-      var active = this.enemies.getChildren().length;
-      if (sp.maxActive && active >= sp.maxActive) continue;
-      if (sp.totalSpawns && st.count >= sp.totalSpawns) continue;
-      var sx = sp.x + (Math.random() * 2 - 1) * (sp.spawnRadius || 50);
-      var sy = sp.y;
-      var idx = config.enemies.indexOf(template);
-      var newEnemy = EnemyEntity.create(this, template, idx);
-      newEnemy.setPosition(sx, sy);
-      this.enemies.add(newEnemy);
-      st.count++;
-      st.nextSpawn = time + (sp.interval || 3000);
     }
   },
 });

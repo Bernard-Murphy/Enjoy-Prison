@@ -221,7 +221,7 @@ export const WinCondition = z
 
 export const TurnBasedPlayerConfig = z.object({
   name: z.string().default("Player 1"),
-  type: z.enum(["human", "ai"]).default("human"),
+  type: z.enum(["human", "ai", "remote"]).default("human"),
   aiDifficulty: z.enum(["easy", "medium", "hard"]).default("medium"),
   color: HexColor.default("#4488ff"),
   symbol: z.string().max(2).default("X"),
@@ -640,11 +640,22 @@ export const ScoringRule = z.object({
   points: z.number().min(0).max(100000).default(10),
 });
 
+// -- Multiplayer (optional) --
+
+export const MultiplayerConfig = z
+  .object({
+    enabled: z.boolean().default(false),
+    maxPlayers: z.number().int().min(2).max(6).default(2),
+    mode: z.enum(["cooperative", "competitive"]).default("competitive"),
+  })
+  .optional();
+
 // -- Top-level Game Config --
 
 export const GameConfigSchema = z.object({
   gameType: z.enum(["action", "turn-based"]).default("action"),
   turnBased: TurnBasedConfig.optional(),
+  multiplayer: MultiplayerConfig,
 
   meta: z
     .object({

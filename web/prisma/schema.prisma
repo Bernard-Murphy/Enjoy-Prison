@@ -19,12 +19,14 @@ model User {
   notes       String?  @db.Text
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
-  games         Game[]
-  comments      Comment[]
-  reports       Report[]
-  sessions      Session[]
-  modLogs       ModLog[]
-  passwordResets PasswordReset[]
+  games              Game[]
+  comments           Comment[]
+  reports            Report[]
+  sessions           Session[]
+  modLogs            ModLog[]
+  passwordResets     PasswordReset[]
+  hostedSessions     GameSession[]     @relation("hostedSessions")
+  gameSessionPlayers GameSessionPlayer[]
 }
 
 model Session {
@@ -52,6 +54,7 @@ model Game {
   buildLogs    GameBuildLog[]
   chatMessages ChatMessage[]
   versions     GameVersion[]
+  gameSessions GameSession[]
 }
 
 model GameVersion {
@@ -141,4 +144,37 @@ model PasswordReset {
   user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
+}
+
+model GameSession {
+  id         Int      @id @default(autoincrement())
+  code       String   @unique @db.VarChar(8)
+  gameId     Int      @map("game_id")
+  game       Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  hostId     Int?     @map("host_id")
+  host       User?    @relation("hostedSessions", fields: [hostId], references: [id])
+  status     String   @default("waiting") @db.VarChar(20)
+  maxPlayers Int      @default(2) @map("max_players")
+  mode       String   @default("turn-based") @db.VarChar(20)
+  config     Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  players GameSessionPlayer[]
+  @@map("game_sessions")
+}
+
+model GameSessionPlayer {
+  id          Int         @id @default(autoincrement())
+  sessionId   Int         @map("session_id")
+  session     GameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userId      Int?        @map("user_id")
+  user        User?       @relation(fields: [userId], references: [id])
+  playerIndex Int         @map("player_index")
+  role        String      @default("guest") @db.VarChar(20)
+  ready       Boolean     @default(false)
+  joinedAt    DateTime    @default(now()) @map("joined_at")
+
+  @@unique([sessionId, playerIndex])
+  @@map("game_session_players")
 }

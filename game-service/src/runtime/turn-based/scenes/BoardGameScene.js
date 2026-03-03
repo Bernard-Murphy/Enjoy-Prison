@@ -43,6 +43,16 @@ var BoardGameScene = new Phaser.Class({
     }
 
     TurnManager.init(common.players || [], 0);
+    var self = this;
+    TurnManager.onApplyRemoteMove = function (scene, moveData) {
+      scene._applyMove(moveData);
+    };
+    if (typeof MessageBridge !== "undefined") {
+      MessageBridge.init();
+      MessageBridge.on("move", function (payload) {
+        TurnManager.applyRemoteMove(self, payload);
+      });
+    }
     this._positions = BoardRenderer.calculatePositions(
       this._layout,
       this._spaces,
@@ -104,6 +114,11 @@ var BoardGameScene = new Phaser.Class({
   },
 
   _updateTurnLabel: function () {
+    if (TurnManager.isCurrentPlayerRemote()) {
+      this._turnLabel.setText("Waiting for opponent...");
+      this._turnLabel.setFill(this._common.secondaryTextColor || "#aaaaaa");
+      return;
+    }
     var cur = TurnManager.getCurrentPlayer();
     if (cur) {
       this._turnLabel.setText(cur.name + "'s turn");
@@ -111,21 +126,16 @@ var BoardGameScene = new Phaser.Class({
     }
   },
 
-  _rollAndMove: function () {
-    if (TurnManager.isCurrentPlayerAI()) return;
-    var diceCount = this._boardConfig.diceCount || 2;
-    var diceSides = this._boardConfig.diceSides || 6;
-    var total = 0;
-    for (var i = 0; i < diceCount; i++) {
-      total += Math.floor(Math.random() * diceSides) + 1;
-    }
+  _applyMove: function (moveData) {
+    var diceRoll = moveData.diceRoll;
+    if (diceRoll == null || diceRoll < 1) return;
+    var self = this;
     var playerIdx = TurnManager.currentPlayerIndex;
     var fromPos = this._playerPositions[playerIdx];
-    var toPos = Math.min(fromPos + total, this._positions.length - 1);
+    var toPos = Math.min(fromPos + diceRoll, this._positions.length - 1);
     this._playerPositions[playerIdx] = toPos;
     var token = this._tokens[playerIdx];
     if (token) {
-      var self = this;
       BoardRenderer.animateMovement(
         this,
         token,
@@ -167,9 +177,31 @@ var BoardGameScene = new Phaser.Class({
         },
       );
     } else {
-      TurnManager.nextTurn(this);
-      this._updateTurnLabel();
+      TurnManager.nextTurn(self);
+      self._updateTurnLabel();
     }
+  },
+
+  _rollAndMove: function () {
+    if (TurnManager.isCurrentPlayerAI()) return;
+    if (TurnManager.isCurrentPlayerRemote()) return;
+    if (typeof MessageBridge !== "undefined") {
+      MessageBridge.send("move", { requestDice: true });
+      return;
+    }
+    var diceCount = this._boardConfig.diceCount || 2;
+    var diceSides = this._boardConfig.diceSides || 6;
+    var total = 0;
+    if (typeof SeededRNG !== "undefined" && SeededRNG.seed) {
+      for (var i = 0; i < diceCount; i++) {
+        total += SeededRNG.int(1, diceSides + 1);
+      }
+    } else {
+      for (var i = 0; i < diceCount; i++) {
+        total += Math.floor(Math.random() * diceSides) + 1;
+      }
+    }
+    this._applyMove({ diceRoll: total });
   },
 
   _endBoardGame: function (winner) {

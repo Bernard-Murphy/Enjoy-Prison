@@ -33,6 +33,9 @@ const RUNTIME_FILES = [
   "turn-based/scenes/TriviaGameScene.js",
   "turn-based/scenes/CardGameScene.js",
   "turn-based/scenes/TBGameOverScene.js",
+  "multiplayer/MessageBridge.js",
+  "multiplayer/SeededRNG.js",
+  "multiplayer/NetworkBridge.js",
   "engine.js",
 ];
 
