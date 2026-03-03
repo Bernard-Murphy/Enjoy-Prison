@@ -1,0 +1,29 @@
+{
+  "gameType": "turn-based",
+  "turnBased": {
+    "subGenre": "card-game",
+    "common": {
+      "title": "War",
+      "viewport": { "width": 800, "height": 600 },
+      "backgroundColor": "#1a1a2e",
+      "players": [
+        { "name": "You", "type": "human", "color": "#4488ff", "symbol": "" },
+        {
+          "name": "Opponent",
+          "type": "ai",
+          "aiDifficulty": "medium",
+          "color": "#ff4444",
+          "symbol": ""
+        }
+      ],
+      "menu": { "title": "War", "showPlayerSetup": true }
+    },
+    "cardGame": {
+      "subType": "war",
+      "useStandardDeck": true,
+      "standardDeckCount": 1,
+      "cardsPerPlayer": 26,
+      "winCondition": "most-cards"
+    }
+  }
+}

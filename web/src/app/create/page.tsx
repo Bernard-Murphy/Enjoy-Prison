@@ -19,6 +19,7 @@ import {
 import { AnimatePresence, motion } from "framer-motion";
 import { normalize, fade_out, transition_fast, fade_out_scale_1 } from "@/lib/transitions";
 import Spinner from "@/components/ui/spinner";
+import { formatPlanToDescription } from "@/lib/game-service-plan";
 
 const CREATE_GAME_MUTATION = gql`
   mutation CreateGame($message: String!, $logoUrl: String, $recaptchaToken: String) {
@@ -37,6 +38,11 @@ const GAME_QUERY = gql`
       title
       status
       hostedAt
+      versions {
+        id
+        isDefault
+        planSnapshot
+      }
     }
   }
 `;
@@ -46,6 +52,7 @@ const GAME_PLAN_QUERY = gql`
     gamePlan(gameId: $gameId) {
       id
       planText
+      description
     }
   }
 `;
@@ -87,10 +94,21 @@ const SEND_MESSAGE_MUTATION = gql`
 `;
 
 const UPDATE_PLAN_MUTATION = gql`
-  mutation UpdateGamePlan($gameId: Int!, $planText: String!) {
-    updateGamePlan(gameId: $gameId, planText: $planText) {
+  mutation UpdateGamePlan($gameId: Int!, $planText: String!, $description: String) {
+    updateGamePlan(gameId: $gameId, planText: $planText, description: $description) {
       id
       planText
+      description
+    }
+  }
+`;
+
+const UPDATE_PLAN_FROM_DESCRIPTION_MUTATION = gql`
+  mutation UpdateGamePlanFromDescription($gameId: Int!, $description: String!) {
+    updateGamePlanFromDescription(gameId: $gameId, description: $description) {
+      id
+      planText
+      description
     }
   }
 `;
@@ -150,7 +168,13 @@ export default function CreatePage() {
   const [buildLogsFetchFallback, setBuildLogsFetchFallback] = useState<string[]>([]);
   const [buildLogsStream, setBuildLogsStream] = useState<string[]>([]);
   const [initialPlanReceived, setInitialPlanReceived] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [planViewMode, setPlanViewMode] = useState<"json" | "description">("json");
+  const [descriptionText, setDescriptionText] = useState("");
+  const [planGenerating, setPlanGenerating] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const lastPlanChunkTimeRef = useRef(0);
 
   useEffect(() => {
     if (planText && !initialPlanReceived) {
@@ -202,6 +226,8 @@ export default function CreatePage() {
         data?.data?.planChunks?.planText ??
         (data as { planChunks?: { planText?: string } })?.planChunks?.planText;
       if (chunk != null) {
+        lastPlanChunkTimeRef.current = Date.now();
+        setPlanGenerating(true);
         setPlanText((prev) => prev + chunk);
       }
     },
@@ -210,6 +236,8 @@ export default function CreatePage() {
   const [createGame, { loading: creating }] = useMutation(CREATE_GAME_MUTATION);
   const [sendMessage, { loading: sending }] = useMutation(SEND_MESSAGE_MUTATION);
   const [updatePlan] = useMutation(UPDATE_PLAN_MUTATION);
+  const [updatePlanFromDescription, { loading: savingFromDescription }] =
+    useMutation(UPDATE_PLAN_FROM_DESCRIPTION_MUTATION);
   const [buildGame, { loading: building }] = useMutation(BUILD_GAME_MUTATION);
 
   const game = gameData?.game;
@@ -230,9 +258,46 @@ export default function CreatePage() {
   const isBuilding = game?.status === "building";
   const isLive = game?.status === "live";
 
+  // Disabled while building, or while in planning and either waiting for first plan or still generating.
+  // Never clear planGenerating on a timer — only when we know the plan is complete (gamePlan.planText sync or assistant message).
+  const planOrBuildInProgress =
+    isBuilding || (isPlanning && !initialPlanReceived) || planGenerating;
+
+  // Treat "planning" with no content yet as generating so textareas stay disabled
   useEffect(() => {
-    if (gamePlan?.planText) setPlanText(gamePlan.planText);
+    if (gameId && isPlanning && !planText.trim()) {
+      setPlanGenerating(true);
+    }
+  }, [gameId, isPlanning, planText]);
+
+  const hasPrefilledFromVersion = useRef(false);
+  useEffect(() => {
+    if (!gamePlan?.planText) return;
+    try {
+      const parsed = JSON.parse(gamePlan.planText);
+      setPlanText(JSON.stringify(parsed, null, 2));
+    } catch {
+      setPlanText(gamePlan.planText);
+    }
+    setPlanGenerating(false);
   }, [gamePlan?.planText]);
+
+  useEffect(() => {
+    if (!gameId || !gameData?.game?.versions?.length || hasPrefilledFromVersion.current) return;
+    const versions = gameData.game.versions as { isDefault: boolean; planSnapshot: string }[];
+    const defaultVer = versions.find((v) => v.isDefault) ?? versions[0];
+    if (!defaultVer?.planSnapshot) return;
+    const serverPlan = planData?.gamePlan?.planText?.trim() ?? "";
+    if (serverPlan) return;
+    hasPrefilledFromVersion.current = true;
+    try {
+      setPlanText(JSON.stringify(JSON.parse(defaultVer.planSnapshot), null, 2));
+    } catch {
+      setPlanText(defaultVer.planSnapshot);
+    }
+    setInitialPlanReceived(true);
+  }, [gameId, gameData?.game?.versions, planData?.gamePlan?.planText]);
+
 
   // Poll build logs whenever user is on Build tab (subscription often closes with 1006, so we rely on polling)
   useEffect(() => {
@@ -281,13 +346,15 @@ export default function CreatePage() {
 
     fetchLogs();
     fetchBuildLogStream();
+    refetchGame();
     const t = setInterval(() => {
       refetchBuildLogs();
+      refetchGame();
       fetchLogs();
       fetchBuildLogStream();
     }, 1000);
     return () => clearInterval(t);
-  }, [gameId, activeTab, refetchBuildLogs]);
+  }, [gameId, activeTab, refetchBuildLogs, refetchGame]);
 
   const fromQuery =
     buildLogsData?.gameBuildLogs?.length
@@ -316,6 +383,7 @@ export default function CreatePage() {
   // Poll plan stream so we show plan text even when subscription doesn't deliver (e.g. WS 1006)
   useEffect(() => {
     if (!gameId || !isPlanning) return;
+    let t: NodeJS.Timeout;
     const poll = async () => {
       try {
         const res = await fetch(
@@ -334,7 +402,7 @@ export default function CreatePage() {
       }
     };
     poll();
-    const t = setInterval(poll, 1500);
+    t = setInterval(poll, 1500);
     return () => clearInterval(t);
   }, [gameId, isPlanning]);
 
@@ -368,19 +436,75 @@ export default function CreatePage() {
     }
 
     try {
+      setPlanText("");
+      setInitialPlanReceived(false);
+      setPlanGenerating(true);
       await sendMessage({ variables: { gameId, message: text } });
       setMessage("");
       refetchMessages();
     } catch {
+      setPlanGenerating(false);
       toast.error("Failed to send message.");
     }
   };
 
   const handleSavePlan = () => {
-    if (!gameId || !planText.trim()) return;
-    updatePlan({ variables: { gameId, planText } })
-      .then(() => toast.success("Plan saved."))
-      .catch(() => toast.error("Failed to save plan."));
+    if (!gameId) return;
+    if (planViewMode === "json") {
+      if (!planText.trim()) return;
+      updatePlan({ variables: { gameId, planText } })
+        .then(() => {
+          toast.success("Plan saved.");
+          refetchPlan();
+        })
+        .catch(() => toast.error("Failed to save plan."));
+    } else {
+      if (!descriptionText.trim()) return;
+      updatePlanFromDescription({
+        variables: { gameId, description: descriptionText },
+      })
+        .then((result) => {
+          toast.success("Plan saved.");
+          refetchPlan();
+          const updated = result.data?.updateGamePlanFromDescription;
+          if (updated) {
+            try {
+              setPlanText(JSON.stringify(JSON.parse(updated.planText), null, 2));
+            } catch {
+              setPlanText(updated.planText);
+            }
+            if (updated.description != null) setDescriptionText(updated.description);
+          }
+        })
+        .catch((err) => {
+          toast.error(err?.message ?? "Failed to save plan.");
+        });
+    }
+  };
+
+  const handlePreview = async () => {
+    if (!planText.trim()) {
+      toast.error("No plan to preview.");
+      return;
+    }
+    setPreviewError(null);
+    setPreviewHtml(null);
+    try {
+      const res = await fetch("/api/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planText }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `Preview failed: ${res.status}`);
+      }
+      const html = await res.text();
+      setPreviewHtml(html);
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : "Preview failed");
+      toast.error("Preview failed.");
+    }
   };
 
   const handleBuild = () => {
@@ -399,20 +523,25 @@ export default function CreatePage() {
     skip: !gameId,
     onData: () => {
       refetchMessages();
-      refetchPlan();
+      refetchPlan().then(() => {
+        setPlanGenerating(false);
+      });
     },
   });
 
+  const hasRedirectedOnBuild = useRef(false);
   useEffect(() => {
-    if (isLive && activeTab === "build") setActiveTab("play");
-  }, [isLive, activeTab]);
+    if (gameId && isLive && activeTab === "build" && !hasRedirectedOnBuild.current) {
+      hasRedirectedOnBuild.current = true;
+      router.push(`/games/${gameId}`);
+    }
+  }, [gameId, isLive, activeTab, router]);
 
   useEffect(() => {
     chatScrollRef.current?.scrollTo({ top: chatScrollRef.current.scrollHeight, behavior: "smooth" });
   }, [chatDisplayMessages]);
 
   const buildTabDisabled = isPlanning;
-  const playDisabled = !isLive;
 
   const chatSection = (
     <>
@@ -507,7 +636,7 @@ export default function CreatePage() {
   return (
     <div className="flex flex-col md:flex-row h-[calc(100vh-4rem)]">
       <div
-        className={`overflow-hidden transition-all duration-500 flex flex-col ${gameId ? "min-h-0 flex-1 md:max-w-[66.666%] md:w-2/3 md:border-r" : "h-0 md:h-auto md:w-0"}`}
+        className={`overflow-hidden transition-all duration-300 flex flex-col ${gameId ? "min-h-0 flex-1 md:max-w-[66.666%] md:w-2/3 md:border-r" : "h-0 md:h-auto md:w-0"}`}
 
       >
         <Tabs
@@ -520,31 +649,97 @@ export default function CreatePage() {
             <TabsTrigger value="build" disabled={buildTabDisabled}>
               Build
             </TabsTrigger>
-            <TabsTrigger value="play" disabled={playDisabled}>
-              Play
-            </TabsTrigger>
           </TabsList>
+
 
           <AnimatePresence mode="wait">
             {activeTab === "plan" && (
               <motion.div key="plan" initial={fade_out} animate={normalize} exit={fade_out_scale_1} transition={transition_fast} className="flex-1 m-4 mt-2 min-h-0">
                 <AnimatePresence mode="wait">
                   {initialPlanReceived ? (
-                    <motion.div key="received" initial={fade_out} animate={normalize} exit={fade_out_scale_1} transition={transition_fast} className="h-full">
-                      <Textarea
-                        className="h-full min-h-[200px] resize-none"
-                        placeholder="Build plan will appear here..."
-                        value={planText}
-                        onChange={(e) => setPlanText(e.target.value)}
-                        disabled={isBuilding}
-                      />
-                      <Button
-                        className="mt-2"
-                        onClick={handleSavePlan}
-                        disabled={isBuilding}
-                      >
-                        Save plan
-                      </Button>
+                    <motion.div
+                      className={`h-full min-h-[200px] resize-none flex flex-col ${planOrBuildInProgress ? "pointer-events-none opacity-90" : ""}`}
+                      key="received"
+                      initial={fade_out}
+                      animate={normalize}
+                      exit={fade_out_scale_1}
+                      transition={transition_fast}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex gap-2 mb-2 pointer-events-auto">
+                          <Button
+                            type="button"
+                            variant={planViewMode === "description" ? "secondary" : "outline"}
+                            size="sm"
+                            onClick={() => {
+                              setPlanViewMode("description");
+                              setDescriptionText(
+                                gamePlan?.description?.trim() ?? formatPlanToDescription(planText),
+                              );
+                            }}
+                            disabled={planOrBuildInProgress}
+                          >
+                            Description
+                          </Button>
+                          <Button
+                            type="button"
+                            variant={planViewMode === "json" ? "secondary" : "outline"}
+                            size="sm"
+                            onClick={() => setPlanViewMode("json")}
+                            disabled={planOrBuildInProgress}
+                          >
+                            JSON
+                          </Button>
+                        </div>
+                        {planOrBuildInProgress && <Spinner size="sm" />}
+                      </div>
+
+                      {planViewMode === "json" ? (
+                        <Textarea
+                          className="flex-1 min-h-0"
+                          placeholder="Build plan will appear here..."
+                          value={planText}
+                          onChange={(e) => setPlanText(e.target.value)}
+                          disabled={planOrBuildInProgress}
+                          readOnly={planOrBuildInProgress}
+                        />
+                      ) : (
+                        <Textarea
+                          className="flex-1 min-h-0 font-sans"
+                          placeholder="Title, description, rules, and controls..."
+                          value={descriptionText}
+                          onChange={(e) => setDescriptionText(e.target.value)}
+                          disabled={planOrBuildInProgress}
+                          readOnly={planOrBuildInProgress}
+                        />
+                      )}
+                      <div className="py-2 flex flex-wrap gap-2 pointer-events-auto">
+                        <Button
+                          onClick={handleSavePlan}
+                          disabled={planOrBuildInProgress || savingFromDescription || (planViewMode === "json" ? !planText.trim() : !descriptionText.trim())}
+                        >
+                          {savingFromDescription ? <Spinner size="sm" /> : "Save plan"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={handlePreview}
+                          disabled={planOrBuildInProgress || !planText.trim()}
+                        >
+                          Preview
+                        </Button>
+                      </div>
+                      {previewError && (
+                        <p className="mt-2 text-sm text-destructive">{previewError}</p>
+                      )}
+                      {/* className={`overflow-hidden transition-all duration-300 flex flex-col ${gameId ? "min-h-0 flex-1 md:max-w-[66.666%] md:w-2/3 md:border-r" : "h-0 md:h-auto md:w-0"}`} */}
+                      <div className={`${previewHtml ? "h-[300px] border" : "h-0"} transition-all duration-300 rounded  overflow-hidden ${planOrBuildInProgress ? "opacity-50" : ""}`}>
+                        <iframe
+                          title="Game preview"
+                          srcDoc={previewHtml ?? undefined}
+                          className="w-full h-full border-0"
+                          sandbox="allow-scripts"
+                        />
+                      </div>
                     </motion.div>
                   ) : (
                     <motion.div key="not-received" initial={fade_out} animate={normalize} exit={fade_out_scale_1} transition={transition_fast} className="h-full flex flex-col items-center justify-center">
@@ -563,7 +758,7 @@ export default function CreatePage() {
                       <Card className="p-4">
                         <pre className="text-sm whitespace-pre-wrap font-mono">
                           {displayBuildLogs.map((log: string) => (
-                            <motion.span
+                            <motion.div
                               initial={{
                                 ...fade_out,
                                 width: 0
@@ -577,7 +772,7 @@ export default function CreatePage() {
                               key={log}
                             >
                               {log}
-                            </motion.span>
+                            </motion.div>
                           ))}
                         </pre>
                       </Card>
@@ -591,26 +786,13 @@ export default function CreatePage() {
                 </AnimatePresence>
               </motion.div>
             )}
-            {activeTab === "play" && (
-              <motion.div key="play" initial={fade_out} animate={normalize} exit={fade_out_scale_1} transition={transition_fast} className="flex-1 m-4 mt-2 min-h-0">
-                {game?.hostedAt ? (
-                  <iframe
-                    src={game.hostedAt}
-                    title="Game"
-                    className="w-full h-full min-h-[300px] rounded border bg-background"
-                  />
-                ) : (
-                  <p className="text-muted-foreground">Game not ready to play yet.</p>
-                )}
-              </motion.div>
-            )}
           </AnimatePresence>
 
 
         </Tabs>
       </div>
       <div
-        className={`transition-all duration-500 flex flex-col border-t md:border-t-0 md:border-l min-h-[50vh] md:min-h-0 ${gameId ? "md:w-1/3 md:min-w-[280px]" : "flex-1 w-full"
+        className={`transition-all duration-300 flex flex-col border-t md:border-t-0 md:border-l min-h-[50vh] md:min-h-0 ${gameId ? "md:w-1/3 md:min-w-[280px]" : "flex-1 w-full"
           }`}
       >
         {chatSection}

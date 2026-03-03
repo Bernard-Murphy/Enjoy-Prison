@@ -13,6 +13,7 @@ import { signJWT } from "../session";
 import { verifyRecaptcha, isRecaptchaRequired } from "../recaptcha";
 import {
   fetchPlanFromGameService,
+  fetchPlanFromDescription,
   parsePlanNameAndDescription,
 } from "../game-service-plan";
 import { triggerBuild } from "../game-service-build";
@@ -51,6 +52,20 @@ export const resolvers = {
       parent.userId
         ? prisma.user.findUnique({ where: { id: parent.userId } })
         : null,
+    versions: (
+      parent: { id: number; userId: number | null },
+      _args: unknown,
+      ctx: Context,
+    ) => {
+      const includeArchived = ctx.user?.userId === parent.userId;
+      return prisma.gameVersion.findMany({
+        where: {
+          gameId: parent.id,
+          ...(includeArchived ? {} : { archived: false }),
+        },
+        orderBy: { createdAt: "desc" },
+      });
+    },
   },
 
   Comment: {
@@ -194,17 +209,58 @@ export const resolvers = {
   Mutation: {
     updateGamePlan: async (
       _root: unknown,
-      { gameId, planText }: { gameId: number; planText: string },
+      {
+        gameId,
+        planText,
+        description: descriptionArg,
+      }: { gameId: number; planText: string; description?: string | null },
     ) => {
       const plan = await prisma.gamePlan.upsert({
         where: { gameId },
-        create: { gameId, planText },
-        update: { planText },
+        create: {
+          gameId,
+          planText,
+          ...(descriptionArg != null && { description: descriptionArg }),
+        },
+        update: {
+          planText,
+          ...(descriptionArg !== undefined && { description: descriptionArg }),
+        },
       });
-      const { title, description } = parsePlanNameAndDescription(planText);
+      const { title } = parsePlanNameAndDescription(planText);
+      const gameDescription =
+        descriptionArg ?? parsePlanNameAndDescription(planText).description;
       await prisma.game.update({
         where: { id: gameId },
-        data: { title, description },
+        data: { title, description: gameDescription },
+      });
+      return plan;
+    },
+    updateGamePlanFromDescription: async (
+      _root: unknown,
+      { gameId, description }: { gameId: number; description: string },
+    ) => {
+      const { content, description: formattedDescription } =
+        await fetchPlanFromDescription(description);
+      const plan = await prisma.gamePlan.upsert({
+        where: { gameId },
+        create: {
+          gameId,
+          planText: content,
+          description: formattedDescription || description,
+        },
+        update: {
+          planText: content,
+          description: formattedDescription || description,
+        },
+      });
+      const { title } = parsePlanNameAndDescription(content);
+      await prisma.game.update({
+        where: { id: gameId },
+        data: {
+          title,
+          description: formattedDescription || description,
+        },
       });
       return plan;
     },
@@ -352,37 +408,54 @@ export const resolvers = {
           message,
         } as Prisma.ChatMessageUncheckedCreateInput,
       });
-      // Background: generate initial plan or clarification; only update plan when type is plan
+      // Background: generate plan (DSL JSON) or clarification
       (async () => {
         try {
           const webBase = process.env.WEB_APP_URL || "http://localhost:3000";
-          const planLogCallbackUrl = `${webBase.replace(/\/$/, "")}/api/plan-log`;
+          const base = webBase.replace(/\/$/, "");
           const result = await fetchPlanFromGameService(
             message,
             undefined,
             game.id,
-            planLogCallbackUrl,
+            `${base}/api/plan-log`,
           );
           if (result.type === "plan") {
             await prisma.gamePlan.upsert({
               where: { gameId: game.id },
-              create: { gameId: game.id, planText: result.content },
-              update: { planText: result.content },
+              create: {
+                gameId: game.id,
+                planText: result.content,
+                ...(result.description != null && {
+                  description: result.description,
+                }),
+              },
+              update: {
+                planText: result.content,
+                ...(result.description != null && {
+                  description: result.description,
+                }),
+              },
             });
-            const { title, description } = parsePlanNameAndDescription(
-              result.content,
-            );
+            const { title } = parsePlanNameAndDescription(result.content);
+            const description =
+              result.description ??
+              parsePlanNameAndDescription(result.content).description;
             await prisma.game.update({
               where: { id: game.id },
               data: { title, description },
             });
+            planChunkBuffer.set(game.id, [result.content]);
           }
+          const displayMessage =
+            result.type === "plan"
+              ? "I've created your game design. You can edit it in the Plan tab and build when ready."
+              : result.content;
           const assistantMsg = await prisma.chatMessage.create({
             data: {
               gameId: game.id,
               role: "assistant",
               messageKind: result.type,
-              message: result.content,
+              message: displayMessage,
             } as Prisma.ChatMessageUncheckedCreateInput,
           });
           pubsub.publish(`${CHAT_MESSAGE_ADDED}:${game.id}`, {
@@ -423,33 +496,50 @@ export const resolvers = {
               select: { planText: true },
             });
             const webBase = process.env.WEB_APP_URL || "http://localhost:3000";
-            const planLogCallbackUrl = `${webBase.replace(/\/$/, "")}/api/plan-log`;
+            const base = webBase.replace(/\/$/, "");
             const result = await fetchPlanFromGameService(
               message,
               existing?.planText ?? undefined,
               gameId,
-              planLogCallbackUrl,
+              `${base}/api/plan-log`,
             );
             if (result.type === "plan") {
               await prisma.gamePlan.upsert({
                 where: { gameId },
-                create: { gameId, planText: result.content },
-                update: { planText: result.content },
+                create: {
+                  gameId,
+                  planText: result.content,
+                  ...(result.description != null && {
+                    description: result.description,
+                  }),
+                },
+                update: {
+                  planText: result.content,
+                  ...(result.description != null && {
+                    description: result.description,
+                  }),
+                },
               });
-              const { title, description } = parsePlanNameAndDescription(
-                result.content,
-              );
+              const { title } = parsePlanNameAndDescription(result.content);
+              const description =
+                result.description ??
+                parsePlanNameAndDescription(result.content).description;
               await prisma.game.update({
                 where: { id: gameId },
                 data: { title, description },
               });
+              planChunkBuffer.set(gameId, [result.content]);
             }
+            const displayMessage =
+              result.type === "plan"
+                ? "I've updated your game design. Check the Plan tab and build when ready."
+                : result.content;
             const assistantMsg = await prisma.chatMessage.create({
               data: {
                 gameId,
                 role: "assistant",
                 messageKind: result.type,
-                message: result.content,
+                message: displayMessage,
               } as Prisma.ChatMessageUncheckedCreateInput,
             });
             pubsub.publish(`${CHAT_MESSAGE_ADDED}:${gameId}`, {
@@ -545,6 +635,46 @@ export const resolvers = {
     },
     restoreGame: async () => {
       throw new Error("Not implemented");
+    },
+
+    archiveGameVersion: async (
+      _: unknown,
+      { versionId }: { versionId: number },
+      ctx: Context,
+    ) => {
+      if (!ctx.user) throw new Error("Unauthorized");
+      const version = await prisma.gameVersion.findUnique({
+        where: { id: versionId },
+        include: { game: { select: { userId: true } } },
+      });
+      if (!version) throw new Error("Version not found");
+      if (version.game.userId !== ctx.user.userId) {
+        throw new Error("Only the game owner can archive versions");
+      }
+      return prisma.gameVersion.update({
+        where: { id: versionId },
+        data: { archived: true },
+      });
+    },
+
+    unarchiveGameVersion: async (
+      _: unknown,
+      { versionId }: { versionId: number },
+      ctx: Context,
+    ) => {
+      if (!ctx.user) throw new Error("Unauthorized");
+      const version = await prisma.gameVersion.findUnique({
+        where: { id: versionId },
+        include: { game: { select: { userId: true } } },
+      });
+      if (!version) throw new Error("Version not found");
+      if (version.game.userId !== ctx.user.userId) {
+        throw new Error("Only the game owner can unarchive versions");
+      }
+      return prisma.gameVersion.update({
+        where: { id: versionId },
+        data: { archived: false },
+      });
     },
 
     createComment: async (
@@ -671,36 +801,47 @@ export const resolvers = {
     },
     planChunks: {
       subscribe: async (_: unknown, { gameId }: { gameId: number }) => {
-        const channel = `${PLAN_CHUNKS}:${gameId}`;
-        const pubsubIterator = pubsub.asyncIterator(channel);
-        const buffer = planChunkBuffer.get(gameId) ?? [];
+        const POLL_MS = 50;
+        const IDLE_TIMEOUT_MS = 5000;
         const existing = await prisma.gamePlan.findUnique({
           where: { gameId },
           select: { planText: true },
         });
 
-        async function* withReplay(): AsyncGenerator<{
+        async function* drainBuffer(): AsyncGenerator<{
           planChunks: { planText: string };
         }> {
-          // Replay buffered chunks so late subscribers get the full stream
-          for (const planText of buffer) {
-            yield { planChunks: { planText } };
-          }
-          // If no buffer but plan already in DB (e.g. finished before subscribe), send once
-          if (buffer.length === 0 && existing?.planText) {
+          let lastIndex = 0;
+          let lastActivityAt = 0;
+          const startedAt = Date.now();
+          const maxWaitMs = 60000;
+          const bufferAtStart = planChunkBuffer.get(gameId) ?? [];
+
+          // If buffer is empty and plan is in DB, send it once but keep subscription open
+          // so we can deliver new chunks when user refines (don't return here).
+          if (bufferAtStart.length === 0 && existing?.planText) {
             yield { planChunks: { planText: existing.planText } };
+            lastActivityAt = Date.now();
           }
 
-          // Forward any newly-published chunks
           // eslint-disable-next-line no-constant-condition
           while (true) {
-            const next = await pubsubIterator.next();
-            if (next.done) return;
-            yield next.value as { planChunks: { planText: string } };
+            const buffer = planChunkBuffer.get(gameId) ?? [];
+            while (lastIndex < buffer.length) {
+              yield { planChunks: { planText: buffer[lastIndex] } };
+              lastIndex += 1;
+              lastActivityAt = Date.now();
+            }
+            if (buffer.length > 0 && lastIndex >= buffer.length) {
+              const idle = Date.now() - lastActivityAt;
+              if (idle >= IDLE_TIMEOUT_MS) return;
+            }
+            if (Date.now() - startedAt > maxWaitMs) return;
+            await new Promise((r) => setTimeout(r, POLL_MS));
           }
         }
 
-        return withReplay();
+        return drainBuffer();
       },
     },
     chatMessageAdded: {

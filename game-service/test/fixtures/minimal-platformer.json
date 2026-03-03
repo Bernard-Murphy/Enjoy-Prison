@@ -1,0 +1,25 @@
+{
+  "meta": {
+    "title": "Minimal Platformer",
+    "genre": "platformer",
+    "viewport": { "width": 800, "height": 600 },
+    "gravity": { "x": 0, "y": 800 },
+    "worldBounds": { "width": 800, "height": 600 }
+  },
+  "player": {
+    "x": 100,
+    "y": 400,
+    "abilities": [{ "type": "jump", "trigger": "action1" }]
+  },
+  "platforms": [
+    { "x": 0, "y": 536, "width": 800, "height": 64, "type": "static" }
+  ],
+  "collectibles": [
+    { "name": "Star", "x": 400, "y": 500, "effect": "score", "value": 10 }
+  ],
+  "rules": {
+    "winCondition": { "type": "score", "value": 10 },
+    "loseCondition": { "type": "health-zero" },
+    "scoring": [{ "event": "collect", "points": 10 }]
+  }
+}

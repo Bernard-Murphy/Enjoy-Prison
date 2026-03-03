@@ -1,0 +1,38 @@
+{
+  "gameType": "turn-based",
+  "turnBased": {
+    "subGenre": "memory-game",
+    "common": {
+      "title": "Memory Match",
+      "viewport": { "width": 800, "height": 600 },
+      "backgroundColor": "#1a1a2e",
+      "players": [
+        {
+          "name": "Player 1",
+          "type": "human",
+          "color": "#4488ff",
+          "symbol": ""
+        },
+        {
+          "name": "Player 2",
+          "type": "ai",
+          "aiDifficulty": "easy",
+          "color": "#ff4444",
+          "symbol": ""
+        }
+      ],
+      "menu": { "title": "Memory Match", "showPlayerSetup": true }
+    },
+    "memoryGame": {
+      "rows": 4,
+      "cols": 4,
+      "cardWidth": 80,
+      "cardHeight": 80,
+      "theme": "shapes",
+      "cardsFlippedPerTurn": 2,
+      "flipDuration": 400,
+      "mismatchShowTime": 1000,
+      "showMoveCounter": true
+    }
+  }
+}

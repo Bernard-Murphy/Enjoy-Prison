@@ -4,6 +4,7 @@ import cors from "cors";
 import planRoutes from "./routes/plan";
 import buildRoutes from "./routes/build";
 import modifyRoutes from "./routes/modify";
+import previewRoutes from "./routes/preview";
 
 const app = express();
 app.use(cors());
@@ -16,6 +17,7 @@ app.get("/health", (_req, res) => {
 app.use("/api/plan", planRoutes);
 app.use("/api/build", buildRoutes);
 app.use("/api/modify", modifyRoutes);
+app.use("/api/preview", previewRoutes);
 
 const PORT = process.env.PORT || 4001;
 app.listen(PORT, () => {

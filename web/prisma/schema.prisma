@@ -37,20 +37,35 @@ model Session {
 }
 
 model Game {
-  id          Int      @id @default(autoincrement())
-  title       String   @db.VarChar(30)
-  status      String   @db.VarChar(20)
-  userId      Int?     @map("user_id")
-  user        User?    @relation(fields: [userId], references: [id])
-  description String  @db.Text
-  views       Int      @default(0)
-  forkedFrom  Int?     @map("forked_from")
-  hostedAt    String   @map("hosted_at") @db.VarChar(500)
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id           Int          @id @default(autoincrement())
+  title        String       @db.VarChar(30)
+  status       String       @db.VarChar(20)
+  userId       Int?         @map("user_id")
+  user         User?        @relation(fields: [userId], references: [id])
+  description  String       @db.Text
+  views        Int          @default(0)
+  forkedFrom   Int?         @map("forked_from")
+  hostedAt     String       @map("hosted_at") @db.VarChar(500)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
   gamePlan     GamePlan?
   buildLogs    GameBuildLog[]
   chatMessages ChatMessage[]
+  versions     GameVersion[]
+}
+
+model GameVersion {
+  id           Int      @id @default(autoincrement())
+  gameId       Int      @map("game_id")
+  game         Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  hostedAt     String   @map("hosted_at") @db.VarChar(500)
+  planSnapshot String   @map("plan_snapshot") @db.Text
+  isDefault    Boolean  @default(false) @map("is_default")
+  archived     Boolean  @default(false)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("game_versions")
 }
 
 model Comment {
@@ -66,12 +81,13 @@ model Comment {
 }
 
 model GamePlan {
-  id        Int      @id @default(autoincrement())
-  gameId    Int      @unique @map("game_id")
-  game      Game     @relation(fields: [gameId], references: [id])
-  planText  String   @map("plan_text") @db.Text
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  id          Int       @id @default(autoincrement())
+  gameId      Int       @unique @map("game_id")
+  game        Game      @relation(fields: [gameId], references: [id])
+  planText    String    @map("plan_text") @db.Text
+  description String?   @map("description") @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
 }
 
 model GameBuildLog {

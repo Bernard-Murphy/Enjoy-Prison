@@ -14,6 +14,7 @@ const {
 } = require("./src/lib/pubsub");
 const { schema } = require("./src/lib/graphql/apollo-server");
 const { appendBuildLogAndPublish } = require("./src/lib/build-log");
+const { handleBuildComplete } = require("./src/lib/handle-build-complete");
 const { prisma } = require("./src/lib/prisma");
 
 function readBody(req) {
@@ -52,9 +53,6 @@ app
 
       // Run GraphQL in this process so mutations (e.g. buildGame) use the same pubsub as WebSocket subscriptions.
       if (isPost && pathname === "/api/graphql") {
-        console.log(
-          "[server.js] POST /api/graphql received (same-process GraphQL)",
-        );
         let responseSent = false;
         try {
           const raw = await readBody(req);
@@ -82,19 +80,7 @@ app
               result.errors.map((e) => e.message),
             );
           }
-          if (result.data) {
-            const keys = Object.keys(result.data);
-            console.log(
-              "[server.js] graphql result data keys:",
-              keys.join(", "),
-            );
-            if (result.data.gameBuildLogs) {
-              console.log(
-                "[server.js] gameBuildLogs count:",
-                result.data.gameBuildLogs.length,
-              );
-            }
-          }
+
           res.setHeader("Content-Type", "application/json; charset=utf-8");
           if (newSessionId) {
             res.setHeader(
@@ -157,7 +143,6 @@ app
 
       // Handle plan-log callback: game-service streams plan chunks here; we publish to planChunks subscription.
       if (isPost && pathname === "/api/plan-log") {
-        console.log("[server.js] POST /api/plan-log received");
         try {
           const raw = await readBody(req);
           const body = JSON.parse(raw || "{}");
@@ -210,7 +195,6 @@ app
 
       // Handle build-log callback in this process so pubsub is the same as WebSocket subscriptions.
       if (isPost && pathname === "/api/build-log") {
-        console.log("[server.js] POST /api/build-log received");
         try {
           const raw = await readBody(req);
           const body = JSON.parse(raw || "{}");
@@ -251,13 +235,7 @@ app
             sendJson(res, 400, { error: "gameId required" });
             return;
           }
-          await prisma.game.update({
-            where: { id: gameId },
-            data: { status, hostedAt: hostedAt || "" },
-          });
-          if (!buildLogBuffer.has(gameId)) buildLogBuffer.set(gameId, []);
-          buildLogBuffer.get(gameId).push("Build complete.");
-          await appendBuildLogAndPublish(gameId, "Build complete.");
+          await handleBuildComplete(gameId, status, hostedAt);
           sendJson(res, 200, { ok: true });
         } catch (err) {
           console.error("[build-complete] error:", err);

@@ -1,0 +1,37 @@
+{
+  "gameType": "turn-based",
+  "turnBased": {
+    "subGenre": "grid-game",
+    "common": {
+      "title": "Tic-Tac-Toe",
+      "viewport": { "width": 800, "height": 600 },
+      "backgroundColor": "#1a1a2e",
+      "players": [
+        {
+          "name": "Player 1",
+          "type": "human",
+          "color": "#4488ff",
+          "symbol": "X"
+        },
+        {
+          "name": "Player 2",
+          "type": "ai",
+          "aiDifficulty": "medium",
+          "color": "#ff4444",
+          "symbol": "O"
+        }
+      ],
+      "showTurnIndicator": true,
+      "menu": { "title": "Tic-Tac-Toe", "showPlayerSetup": true }
+    },
+    "gridGame": {
+      "rows": 3,
+      "cols": 3,
+      "cellSize": 100,
+      "placement": "any-empty",
+      "winCondition": { "type": "n-in-a-row", "count": 3 },
+      "drawCondition": "board-full",
+      "pieceStyle": "symbol"
+    }
+  }
+}

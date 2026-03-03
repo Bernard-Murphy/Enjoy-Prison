@@ -1,0 +1,30 @@
+{
+  "gameType": "turn-based",
+  "turnBased": {
+    "subGenre": "word-game",
+    "common": {
+      "title": "Hangman",
+      "viewport": { "width": 800, "height": 600 },
+      "backgroundColor": "#1a1a2e",
+      "players": [
+        {
+          "name": "Player 1",
+          "type": "human",
+          "color": "#4488ff",
+          "symbol": ""
+        }
+      ],
+      "menu": { "title": "Hangman", "showPlayerSetup": false }
+    },
+    "wordGame": {
+      "subType": "hangman",
+      "wordSource": "built-in",
+      "wordCategory": "mixed",
+      "minWordLength": 4,
+      "maxWordLength": 8,
+      "hangman": { "maxWrongGuesses": 6, "drawStyle": "classic" },
+      "letterDisplayStyle": "boxes",
+      "letterSize": 32
+    }
+  }
+}

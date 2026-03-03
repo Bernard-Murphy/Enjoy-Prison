@@ -16,6 +16,17 @@ export const typeDefs = gql`
     games: [Game!]!
   }
 
+  type GameVersion {
+    id: Int!
+    gameId: Int!
+    hostedAt: String!
+    planSnapshot: String!
+    isDefault: Boolean!
+    archived: Boolean!
+    createdAt: DateTime!
+    updatedAt: DateTime!
+  }
+
   type Game {
     id: Int!
     title: String!
@@ -28,6 +39,7 @@ export const typeDefs = gql`
     hostedAt: String!
     createdAt: DateTime!
     updatedAt: DateTime!
+    versions: [GameVersion!]!
   }
 
   type Comment {
@@ -46,6 +58,7 @@ export const typeDefs = gql`
     id: Int!
     gameId: Int!
     planText: String!
+    description: String
     createdAt: DateTime!
     updatedAt: DateTime!
   }
@@ -121,7 +134,12 @@ export const typeDefs = gql`
   }
 
   type Mutation {
-    updateGamePlan(gameId: Int!, planText: String!): GamePlan!
+    updateGamePlan(
+      gameId: Int!
+      planText: String!
+      description: String
+    ): GamePlan!
+    updateGamePlanFromDescription(gameId: Int!, description: String!): GamePlan!
     login(username: String!, password: String!): AuthPayload!
     register(input: RegisterInput!, recaptchaToken: String): AuthPayload!
     logout: Boolean!
@@ -134,6 +152,8 @@ export const typeDefs = gql`
     forkGame(gameId: Int!): Game!
     removeGame(gameId: Int!, reason: String!, details: String): Game!
     restoreGame(gameId: Int!): Game!
+    archiveGameVersion(versionId: Int!): GameVersion!
+    unarchiveGameVersion(versionId: Int!): GameVersion!
     createComment(
       flavor: String!
       contentId: Int!

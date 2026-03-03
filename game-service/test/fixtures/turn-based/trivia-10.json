@@ -1,0 +1,100 @@
+{
+  "gameType": "turn-based",
+  "turnBased": {
+    "subGenre": "trivia-game",
+    "common": {
+      "title": "Trivia Quiz",
+      "viewport": { "width": 800, "height": 600 },
+      "backgroundColor": "#1a1a2e",
+      "players": [
+        {
+          "name": "Player 1",
+          "type": "human",
+          "color": "#4488ff",
+          "symbol": ""
+        }
+      ],
+      "menu": { "title": "Trivia Quiz", "showPlayerSetup": false }
+    },
+    "triviaGame": {
+      "questionCount": 10,
+      "shuffleQuestions": true,
+      "shuffleAnswers": true,
+      "timeLimitPerQuestion": 15,
+      "pointsPerCorrect": 100,
+      "pointsPerWrong": 0,
+      "questions": [
+        {
+          "question": "What is 2 + 2?",
+          "answers": ["3", "4", "5", "6"],
+          "correctIndex": 1,
+          "category": "Math",
+          "points": 100
+        },
+        {
+          "question": "Capital of France?",
+          "answers": ["London", "Berlin", "Paris", "Madrid"],
+          "correctIndex": 2,
+          "category": "Geography",
+          "points": 100
+        },
+        {
+          "question": "Largest planet in our solar system?",
+          "answers": ["Earth", "Mars", "Jupiter", "Saturn"],
+          "correctIndex": 2,
+          "category": "Science",
+          "points": 100
+        },
+        {
+          "question": "How many continents are there?",
+          "answers": ["5", "6", "7", "8"],
+          "correctIndex": 2,
+          "category": "Geography",
+          "points": 100
+        },
+        {
+          "question": "What year did World War II end?",
+          "answers": ["1943", "1944", "1945", "1946"],
+          "correctIndex": 2,
+          "category": "History",
+          "points": 100
+        },
+        {
+          "question": "Which element has the symbol Au?",
+          "answers": ["Silver", "Copper", "Gold", "Aluminum"],
+          "correctIndex": 2,
+          "category": "Science",
+          "points": 100
+        },
+        {
+          "question": "Who wrote Romeo and Juliet?",
+          "answers": ["Dickens", "Shakespeare", "Austen", "Twain"],
+          "correctIndex": 1,
+          "category": "Literature",
+          "points": 100
+        },
+        {
+          "question": "What is the smallest prime number?",
+          "answers": ["0", "1", "2", "3"],
+          "correctIndex": 2,
+          "category": "Math",
+          "points": 100
+        },
+        {
+          "question": "Which planet is closest to the Sun?",
+          "answers": ["Venus", "Earth", "Mercury", "Mars"],
+          "correctIndex": 2,
+          "category": "Science",
+          "points": 100
+        },
+        {
+          "question": "How many sides does a hexagon have?",
+          "answers": ["5", "6", "7", "8"],
+          "correctIndex": 1,
+          "category": "Math",
+          "points": 100
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "gameType": "turn-based",
+  "turnBased": {
+    "subGenre": "word-game",
+    "common": {
+      "title": "Wordle",
+      "viewport": { "width": 800, "height": 600 },
+      "backgroundColor": "#1a1a2e",
+      "players": [
+        {
+          "name": "Player 1",
+          "type": "human",
+          "color": "#4488ff",
+          "symbol": ""
+        }
+      ],
+      "menu": { "title": "Wordle", "showPlayerSetup": false }
+    },
+    "wordGame": {
+      "subType": "wordle",
+      "wordSource": "built-in",
+      "wordle": {
+        "wordLength": 5,
+        "maxAttempts": 6,
+        "correctColor": "#538d4e",
+        "misplacedColor": "#b59f3b",
+        "wrongColor": "#3a3a3c",
+        "tileSize": 62
+      }
+    }
+  }
+}

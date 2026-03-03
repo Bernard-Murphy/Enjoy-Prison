@@ -1,0 +1,40 @@
+{
+  "gameType": "turn-based",
+  "turnBased": {
+    "subGenre": "grid-game",
+    "common": {
+      "title": "Connect 4",
+      "viewport": { "width": 800, "height": 600 },
+      "backgroundColor": "#1a1a2e",
+      "players": [
+        {
+          "name": "Player 1",
+          "type": "human",
+          "color": "#4488ff",
+          "symbol": "X"
+        },
+        {
+          "name": "Player 2",
+          "type": "ai",
+          "aiDifficulty": "medium",
+          "color": "#ff4444",
+          "symbol": "O"
+        }
+      ],
+      "menu": { "title": "Connect 4", "showPlayerSetup": true }
+    },
+    "gridGame": {
+      "rows": 6,
+      "cols": 7,
+      "cellSize": 70,
+      "placement": "gravity-bottom",
+      "winCondition": {
+        "type": "n-in-a-row",
+        "count": 4,
+        "directions": ["horizontal", "vertical", "diagonal-down", "diagonal-up"]
+      },
+      "drawCondition": "board-full",
+      "pieceStyle": "circle"
+    }
+  }
+}

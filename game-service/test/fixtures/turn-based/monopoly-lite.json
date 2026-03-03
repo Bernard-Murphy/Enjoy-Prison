@@ -1,0 +1,156 @@
+{
+  "gameType": "turn-based",
+  "turnBased": {
+    "subGenre": "board-game",
+    "common": {
+      "title": "Monopoly Lite",
+      "viewport": { "width": 800, "height": 600 },
+      "backgroundColor": "#1a1a2e",
+      "players": [
+        {
+          "name": "Player 1",
+          "type": "human",
+          "color": "#4488ff",
+          "symbol": ""
+        },
+        {
+          "name": "Player 2",
+          "type": "ai",
+          "aiDifficulty": "easy",
+          "color": "#ff4444",
+          "symbol": ""
+        }
+      ],
+      "menu": { "title": "Monopoly Lite", "showPlayerSetup": true }
+    },
+    "boardGame": {
+      "subType": "property-trading",
+      "layout": "square-loop",
+      "spacesPerSide": 6,
+      "spaceWidth": 70,
+      "spaceHeight": 90,
+      "startingMoney": 1500,
+      "passGoAmount": 200,
+      "winCondition": "last-standing",
+      "spaces": [
+        { "id": 0, "name": "Go", "type": "start" },
+        {
+          "id": 1,
+          "name": "Mediterranean",
+          "type": "property",
+          "propertyCost": 60,
+          "propertyRent": 2
+        },
+        { "id": 2, "name": "Community", "type": "community-chest" },
+        {
+          "id": 3,
+          "name": "Baltic",
+          "type": "property",
+          "propertyCost": 80,
+          "propertyRent": 4
+        },
+        { "id": 4, "name": "Tax", "type": "tax", "amount": 200 },
+        {
+          "id": 5,
+          "name": "Railroad",
+          "type": "railroad",
+          "propertyCost": 200
+        },
+        {
+          "id": 6,
+          "name": "Oriental",
+          "type": "property",
+          "propertyCost": 100,
+          "propertyRent": 6
+        },
+        { "id": 7, "name": "Chance", "type": "chance" },
+        {
+          "id": 8,
+          "name": "Vermont",
+          "type": "property",
+          "propertyCost": 100,
+          "propertyRent": 6
+        },
+        {
+          "id": 9,
+          "name": "Connecticut",
+          "type": "property",
+          "propertyCost": 120,
+          "propertyRent": 8
+        },
+        { "id": 10, "name": "Jail", "type": "jail" },
+        {
+          "id": 11,
+          "name": "St. Charles",
+          "type": "property",
+          "propertyCost": 140,
+          "propertyRent": 10
+        },
+        {
+          "id": 12,
+          "name": "Electric",
+          "type": "utility",
+          "propertyCost": 150
+        },
+        {
+          "id": 13,
+          "name": "States",
+          "type": "property",
+          "propertyCost": 140,
+          "propertyRent": 10
+        },
+        {
+          "id": 14,
+          "name": "Virginia",
+          "type": "property",
+          "propertyCost": 160,
+          "propertyRent": 12
+        },
+        {
+          "id": 15,
+          "name": "Railroad",
+          "type": "railroad",
+          "propertyCost": 200
+        },
+        {
+          "id": 16,
+          "name": "St. James",
+          "type": "property",
+          "propertyCost": 180,
+          "propertyRent": 14
+        },
+        { "id": 17, "name": "Community", "type": "community-chest" },
+        {
+          "id": 18,
+          "name": "Tennessee",
+          "type": "property",
+          "propertyCost": 180,
+          "propertyRent": 14
+        },
+        {
+          "id": 19,
+          "name": "New York",
+          "type": "property",
+          "propertyCost": 200,
+          "propertyRent": 16
+        },
+        { "id": 20, "name": "Free Parking", "type": "free-parking" },
+        {
+          "id": 21,
+          "name": "Kentucky",
+          "type": "property",
+          "propertyCost": 220,
+          "propertyRent": 18
+        },
+        { "id": 22, "name": "Chance", "type": "chance" },
+        {
+          "id": 23,
+          "name": "Illinois",
+          "type": "property",
+          "propertyCost": 240,
+          "propertyRent": 20
+        }
+      ]
+    }
+  }
+}
