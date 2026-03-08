@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import multer from "multer";
+import multer, { FileFilterCallback } from "multer";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
 
@@ -20,7 +20,11 @@ const GAME_BASE_URL = process.env.GAME_BASE_URL || "";
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => {
+  fileFilter: (
+    _req: Express.Request,
+    file: Express.Multer.File,
+    cb: FileFilterCallback,
+  ) => {
     const ok =
       file.mimetype === "image/png" ||
       file.mimetype === "image/jpeg" ||
@@ -40,7 +44,7 @@ function buildPublicUrl(key: string): string {
 }
 
 export async function handleUploadLogo(
-  req: Request,
+  req: Request & { file?: Express.Multer.File },
   res: Response,
 ): Promise<void> {
   if (!s3 || !BUCKET) {
@@ -93,7 +97,7 @@ export async function handleUploadLogo(
 router.post(
   "/",
   (req, res, next) => {
-    upload.single("file")(req, res, (err) => {
+    upload.single("file")(req, res, (err: unknown) => {
       if (err) {
         if (
           err instanceof multer.MulterError &&
@@ -101,7 +105,9 @@ router.post(
         ) {
           return res.status(400).json({ error: "File too large (max 5MB)" });
         }
-        return res.status(400).json({ error: err?.message ?? "Upload error" });
+        return res.status(400).json({
+          error: err instanceof Error ? err.message : "Upload error",
+        });
       }
       next();
     });
