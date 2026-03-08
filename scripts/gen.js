@@ -371,6 +371,13 @@ async function main() {
   }
   console.log("[gen] Build complete; game is live.");
 
+  const randomViews = Math.floor(Math.random() * 1000) + 1;
+  await prisma.game.update({
+    where: { id: game.id },
+    data: { views: { increment: randomViews } },
+  });
+  console.log("[gen] Incremented game views by", randomViews);
+
   await insertSeededPrompt(newPrompt);
   console.log("[gen] Inserted prompt into seeded. Done.");
 }
