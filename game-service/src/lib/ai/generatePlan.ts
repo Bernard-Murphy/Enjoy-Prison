@@ -19,6 +19,11 @@ export async function generatePlan(
     throw new Error("OpenAI not configured");
   }
 
+  console.log("[generatePlan] Starting", {
+    userMessageLength: userDescription.length,
+    streaming: !!options?.onChunk,
+  });
+
   let content: string;
 
   if (options?.onChunk) {
@@ -60,12 +65,35 @@ export async function generatePlan(
     content = msg;
   }
 
+  const contentLength = content.length;
+  const snippet = (s: string, head = 400, tail = 200) =>
+    s.length <= head + tail
+      ? s
+      : `${s.slice(0, head)}\n... [${s.length - head - tail} chars omitted] ...\n${s.slice(-tail)}`;
+
   let wrapper: { type?: string; content?: unknown };
   try {
     wrapper = JSON.parse(content) as { type?: string; content?: unknown };
-  } catch {
+  } catch (parseErr) {
+    console.error("[generatePlan] Plan response was not valid JSON", {
+      contentLength,
+      parseError:
+        parseErr instanceof Error ? parseErr.message : String(parseErr),
+      contentSnippet: snippet(content),
+    });
     throw new Error("Plan response was not valid JSON");
   }
+
+  console.log("[generatePlan] Parsed wrapper", {
+    type: wrapper.type,
+    hasContent: wrapper.content != null,
+    contentKeys:
+      wrapper.content &&
+      typeof wrapper.content === "object" &&
+      !Array.isArray(wrapper.content)
+        ? Object.keys(wrapper.content as object)
+        : undefined,
+  });
 
   if (wrapper.type === "clarification" && typeof wrapper.content === "string") {
     return { type: "clarification", content: wrapper.content };

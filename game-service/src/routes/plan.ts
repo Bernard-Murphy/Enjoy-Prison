@@ -113,9 +113,11 @@ export async function handlePlan(req: Request, res: Response): Promise<void> {
       description: formatGameDescription(result.config),
     });
   } catch (err) {
-    console.error("Plan error:", err);
+    console.error("[plan] Plan error:", err);
+    const message =
+      err instanceof Error ? err.message : "Plan generation failed";
     res.status(500).json({
-      error: err instanceof Error ? err.message : "Plan generation failed",
+      error: message,
     });
   }
 }
