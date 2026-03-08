@@ -11,7 +11,7 @@ export async function generateLogo(gameTitle: string): Promise<Buffer | null> {
     return null;
   }
 
-  const prompt = `Eye-catching logo icon for: ${gameTitle}. Square 256x256, suitable for a game thumbnail.`;
+  const prompt = `Eye-catching logo icon for: ${gameTitle}. Detailed and lively design, eye-catching and fun, square 256x256, suitable for a game thumbnail.`;
 
   try {
     const response = await openai.images.generate({
