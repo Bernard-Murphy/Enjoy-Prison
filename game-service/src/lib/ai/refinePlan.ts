@@ -29,7 +29,7 @@ export async function refinePlan(
         { role: "user", content: userMessage },
       ],
       temperature: 0.5,
-      max_tokens: 8000,
+      max_tokens: 16000,
       stream: true,
     });
 
@@ -50,7 +50,7 @@ export async function refinePlan(
         { role: "user", content: userMessage },
       ],
       temperature: 0.5,
-      max_tokens: 8000,
+      max_tokens: 16000,
     });
     const msg = response.choices[0]?.message?.content;
     if (!msg || typeof msg !== "string") {
@@ -79,7 +79,7 @@ export async function refinePlan(
         },
       ],
       temperature: 0.3,
-      max_tokens: 8000,
+      max_tokens: 16000,
     });
 
     const fixContent = fixResponse.choices[0]?.message?.content;
@@ -110,7 +110,7 @@ export async function refinePlan(
         },
       ],
       temperature: 0.3,
-      max_tokens: 8000,
+      max_tokens: 16000,
     });
 
     const fixContent = fixResponse.choices[0]?.message?.content;

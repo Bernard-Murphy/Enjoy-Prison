@@ -35,7 +35,7 @@ export async function generatePlan(
         { role: "user", content: userDescription },
       ],
       temperature: 0.7,
-      max_tokens: 8000,
+      max_tokens: 16000,
       stream: true,
     });
 
@@ -56,7 +56,7 @@ export async function generatePlan(
         { role: "user", content: userDescription },
       ],
       temperature: 0.7,
-      max_tokens: 8000,
+      max_tokens: 16000,
     });
     const msg = response.choices[0]?.message?.content;
     if (!msg || typeof msg !== "string") {
@@ -122,7 +122,7 @@ export async function generatePlan(
           },
         ],
         temperature: 0.3,
-        max_tokens: 8000,
+        max_tokens: 16000,
       });
 
       const fixContent = fixResponse.choices[0]?.message?.content;
@@ -164,7 +164,7 @@ export async function generatePlan(
           },
         ],
         temperature: 0.3,
-        max_tokens: 8000,
+        max_tokens: 16000,
       });
 
       const fixContent = fixResponse.choices[0]?.message?.content;
