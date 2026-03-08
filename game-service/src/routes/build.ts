@@ -102,7 +102,10 @@ export async function handleBuild(req: Request, res: Response): Promise<void> {
       cfg.gameType === "turn-based" && cfg.turnBased?.common?.title
         ? cfg.turnBased.common.title
         : (cfg.meta?.title ?? "Game");
-
+    const description =
+      cfg.gameType === "turn-based" && cfg.turnBased?.common?.description
+        ? cfg.turnBased.common.description
+        : (cfg.meta?.description ?? "");
     let effectiveLogoUrl: string | undefined =
       requestLogoUrl &&
       typeof requestLogoUrl === "string" &&
@@ -113,7 +116,7 @@ export async function handleBuild(req: Request, res: Response): Promise<void> {
 
     if (!effectiveLogoUrl) {
       await sendLog(logCallbackUrl, gameId, "Generating logo...");
-      const logoBuffer = await generateLogo(title);
+      const logoBuffer = await generateLogo(title, description);
       if (logoBuffer && s3 && BUCKET) {
         const prefix = `games/${gameId}`;
         const logoKey = `${prefix}/logo.png`;

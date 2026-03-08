@@ -6,12 +6,15 @@ const IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "dall-e-2";
  * Generate a game logo image using the same AI service (OpenAI Images API).
  * Returns a PNG buffer or null if the service is unavailable or image generation fails.
  */
-export async function generateLogo(gameTitle: string): Promise<Buffer | null> {
+export async function generateLogo(
+  gameTitle: string,
+  gameDescription: string,
+): Promise<Buffer | null> {
   if (!openai) {
     return null;
   }
 
-  const prompt = `Eye-catching logo icon for: ${gameTitle}. Detailed and lively design, eye-catching and fun, square 256x256, suitable for a game thumbnail.`;
+  const prompt = `Logo icon for: ${gameTitle}. ${gameDescription}. Rich colors, detailed and lively design, eye-catching and fun, no text, square 256x256, suitable for a game thumbnail. Avoid plain or grayscale; use bold colors and clear shapes.`;
 
   try {
     const response = await openai.images.generate({
