@@ -14,7 +14,7 @@ export async function generateLogo(
     return null;
   }
 
-  const prompt = `Logo icon for: ${gameTitle}. ${gameDescription}. Rich colors, detailed and lively design, eye-catching and fun, no text, square 256x256, suitable for a game thumbnail. Avoid plain or grayscale; use bold colors and clear shapes.`;
+  const prompt = `Logo icon for: ${gameTitle}. ${gameDescription}. Detailed and lively design, eye-catching and fun, square 256x256, suitable for a game thumbnail.`;
 
   try {
     const response = await openai.images.generate({
