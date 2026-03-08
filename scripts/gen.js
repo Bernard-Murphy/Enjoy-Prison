@@ -371,12 +371,19 @@ async function main() {
   }
   console.log("[gen] Build complete; game is live.");
 
-  const randomViews = Math.floor(Math.random() * 1000) + 1;
-  await prisma.game.update({
-    where: { id: game.id },
-    data: { views: { increment: randomViews } },
-  });
-  console.log("[gen] Incremented game views by", randomViews);
+  const allGames = await prisma.game.findMany({ select: { id: true } });
+  for (const g of allGames) {
+    const addViews = Math.floor(Math.random() * 1000) + 1;
+    await prisma.game.update({
+      where: { id: g.id },
+      data: { views: { increment: addViews } },
+    });
+  }
+  console.log(
+    "[gen] Incremented views for",
+    allGames.length,
+    "game(s) by random amounts (1–1000 each).",
+  );
 
   await insertSeededPrompt(newPrompt);
   console.log("[gen] Inserted prompt into seeded. Done.");
