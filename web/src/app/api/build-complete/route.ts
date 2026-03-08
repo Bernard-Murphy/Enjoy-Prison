@@ -7,13 +7,15 @@ export async function POST(request: NextRequest) {
     const gameId = Number(body?.gameId);
     const status = typeof body?.status === "string" ? body.status : "live";
     const hostedAt = typeof body?.hostedAt === "string" ? body.hostedAt : "";
+    const logoUrl =
+      typeof body?.logoUrl === "string" ? body.logoUrl : undefined;
     if (!gameId || !Number.isInteger(gameId)) {
       return new Response(JSON.stringify({ error: "gameId required" }), {
         status: 400,
         headers: { "Content-Type": "application/json" },
       });
     }
-    await handleBuildComplete(gameId, status, hostedAt);
+    await handleBuildComplete(gameId, status, hostedAt, logoUrl);
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: { "Content-Type": "application/json" },

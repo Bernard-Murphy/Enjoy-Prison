@@ -3,6 +3,18 @@ var TBBootScene = new Phaser.Class({
   initialize: function () {
     Phaser.Scene.call(this, { key: "TBBootScene" });
   },
+  preload: function () {
+    var config = GameUtils.getConfig();
+    var menu =
+      (config &&
+        config.turnBased &&
+        config.turnBased.common &&
+        config.turnBased.common.menu) ||
+      {};
+    if (menu.logoUrl && typeof menu.logoUrl === "string") {
+      this.load.image("menuLogo", menu.logoUrl);
+    }
+  },
   create: function () {
     var config = GameUtils.getConfig();
     var tb = (config && config.turnBased) || {};

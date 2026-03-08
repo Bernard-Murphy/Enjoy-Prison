@@ -3,6 +3,13 @@ var BootScene = new Phaser.Class({
   initialize: function () {
     Phaser.Scene.call(this, { key: "BootScene" });
   },
+  preload: function () {
+    var config = GameUtils.getConfig();
+    var menu = (config && config.scenes && config.scenes.menu) || {};
+    if (menu.logoUrl && typeof menu.logoUrl === "string") {
+      this.load.image("menuLogo", menu.logoUrl);
+    }
+  },
   create: function () {
     var config = GameUtils.getConfig();
 

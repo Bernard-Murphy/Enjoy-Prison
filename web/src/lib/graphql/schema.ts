@@ -37,6 +37,7 @@ export const typeDefs = gql`
     views: Int!
     forkedFrom: Int
     hostedAt: String!
+    logoUrl: String
     createdAt: DateTime!
     updatedAt: DateTime!
     versions: [GameVersion!]!
@@ -149,6 +150,7 @@ export const typeDefs = gql`
     resetPassword(uuid: String!, password: String!): Boolean!
     updateUser(input: UpdateUserInput!): User!
     createGame(message: String!, logoUrl: String, recaptchaToken: String): Game!
+    updateGameLogo(gameId: Int!, logoUrl: String!): Game!
     sendChatMessage(gameId: Int!, message: String!): ChatMessage!
     buildGame(gameId: Int!): Game!
     forkGame(gameId: Int!): Game!

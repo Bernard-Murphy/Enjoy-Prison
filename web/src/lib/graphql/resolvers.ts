@@ -457,6 +457,13 @@ export const resolvers = {
           throw new Error("Human verification failed. Please try again.");
         }
       }
+      const persistLogoUrl =
+        logoUrl &&
+        typeof logoUrl === "string" &&
+        !logoUrl.startsWith("blob:") &&
+        logoUrl.length > 0
+          ? logoUrl
+          : undefined;
       const game = await prisma.game.create({
         data: {
           title: "Untitled Game",
@@ -464,6 +471,7 @@ export const resolvers = {
           description: "",
           hostedAt: "",
           userId: ctx.user?.userId ?? null,
+          ...(persistLogoUrl != null && { logoUrl: persistLogoUrl }),
         },
       });
       await prisma.chatMessage.create({
@@ -531,6 +539,24 @@ export const resolvers = {
         }
       })();
       return game;
+    },
+
+    updateGameLogo: async (
+      _: unknown,
+      { gameId, logoUrl }: { gameId: number; logoUrl: string },
+      ctx: Context,
+    ) => {
+      if (!ctx.user) throw new Error("Unauthorized");
+      const game = await prisma.game.findUnique({
+        where: { id: gameId },
+        select: { userId: true },
+      });
+      if (!game) throw new Error("Game not found");
+      if (game.userId !== ctx.user.userId) throw new Error("Not your game");
+      return prisma.game.update({
+        where: { id: gameId },
+        data: { logoUrl },
+      });
     },
 
     sendChatMessage: async (
@@ -623,10 +649,16 @@ export const resolvers = {
       { gameId }: { gameId: number },
       _ctx: Context,
     ) => {
-      const plan = await prisma.gamePlan.findUnique({
-        where: { gameId },
-        select: { planText: true },
-      });
+      const [plan, game] = await Promise.all([
+        prisma.gamePlan.findUnique({
+          where: { gameId },
+          select: { planText: true },
+        }),
+        prisma.game.findUnique({
+          where: { id: gameId },
+          select: { logoUrl: true },
+        }),
+      ]);
       if (!plan?.planText?.trim()) {
         throw new Error("No plan found. Add a plan before building.");
       }
@@ -654,6 +686,7 @@ export const resolvers = {
             planText: plan.planText,
             onCompleteUrl: `${base}/api/build-complete`,
             logCallbackUrl: `${base}/api/build-log`,
+            logoUrl: game?.logoUrl ?? undefined,
           });
         } catch (err) {
           console.error("Build trigger failed:", err);

@@ -11,7 +11,18 @@ var MenuScene = new Phaser.Class({
 
     this.cameras.main.setBackgroundColor(menu.backgroundColor || "#1a1a2e");
 
-    var title = this.add.text(w / 2, h / 2 - 60, menu.title || "My Game", {
+    var logoY = h / 2 - 140;
+    var titleY = h / 2 - 60;
+    if (this.textures.exists("menuLogo")) {
+      var logo = this.add.image(w / 2, logoY, "menuLogo");
+      var maxW = 200;
+      if (logo.width > maxW) {
+        logo.setDisplaySize(maxW, (logo.height * maxW) / logo.width);
+      }
+      titleY = h / 2 - 20;
+    }
+
+    var title = this.add.text(w / 2, titleY, menu.title || "My Game", {
       fontSize: "48px",
       fill: "#ffffff",
     });
@@ -19,7 +30,7 @@ var MenuScene = new Phaser.Class({
 
     var subtitle = this.add.text(
       w / 2,
-      h / 2 - 10,
+      titleY + 36,
       menu.subtitle || "Press Start",
       {
         fontSize: "24px",
@@ -29,7 +40,7 @@ var MenuScene = new Phaser.Class({
     subtitle.setOrigin(0.5);
 
     var buttons = menu.buttons || [{ label: "Start Game", action: "start" }];
-    var y = h / 2 + 40;
+    var y = titleY + 86;
     for (var i = 0; i < buttons.length; i++) {
       var btn = buttons[i];
       var label = this.add.text(w / 2, y + i * 50, btn.label, {

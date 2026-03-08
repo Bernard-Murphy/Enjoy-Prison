@@ -41,6 +41,7 @@ const USER_GAMES_QUERY = gql`
         title
         description
         views
+        logoUrl
       }
     }
   }
@@ -122,13 +123,14 @@ export default function UserPage() {
         </TabsList>
         <TabsContent value="games" className="mt-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {games.map((game: { id: number; title: string; description: string; views: number }) => (
+            {games.map((game: { id: number; title: string; description: string; views: number; logoUrl?: string | null }) => (
               <GameCard
                 key={game.id}
                 id={game.id}
                 title={game.title}
                 description={game.description}
                 views={game.views}
+                thumbnailUrl={game.logoUrl ?? undefined}
               />
             ))}
           </div>

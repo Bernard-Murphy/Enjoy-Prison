@@ -39,18 +39,16 @@ export interface ButtonProps
   VariantProps<typeof buttonVariants> {
   asChild?: boolean;
   noRipple?: boolean
-  noBounce?: boolean
   bouncyClasses?: string
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false,
-    noBounce = false,
     noRipple = false,
     bouncyClasses = "", ...props }, ref) => {
     const Comp = asChild ? Slot : "button";
     return (
-      <BouncyClick noRipple={noRipple} noBounce={noBounce} disabled={props.disabled ?? false} className={cn(bouncyClasses, className)}>
+      <BouncyClick noRipple={noRipple} disabled={props.disabled ?? false} className={cn(bouncyClasses, className)}>
         <Comp
           className={cn(buttonVariants({ variant, size, className }))}
           ref={ref}

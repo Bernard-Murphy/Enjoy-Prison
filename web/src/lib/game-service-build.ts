@@ -7,6 +7,7 @@ export async function triggerBuild(params: {
   planText: string;
   onCompleteUrl: string;
   logCallbackUrl: string;
+  logoUrl?: string;
 }): Promise<void> {
   const base = process.env.GAME_SERVICE_URL;
   if (!base) {
@@ -19,15 +20,17 @@ export async function triggerBuild(params: {
     "logCallbackUrl:",
     params.logCallbackUrl,
   );
+  const body: Record<string, unknown> = {
+    gameId: params.gameId,
+    planText: params.planText,
+    onCompleteUrl: params.onCompleteUrl,
+    logCallbackUrl: params.logCallbackUrl,
+  };
+  if (params.logoUrl) body.logoUrl = params.logoUrl;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      gameId: params.gameId,
-      planText: params.planText,
-      onCompleteUrl: params.onCompleteUrl,
-      logCallbackUrl: params.logCallbackUrl,
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     const err = await res.text();

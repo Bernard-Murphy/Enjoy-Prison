@@ -38,6 +38,7 @@ const GAME_QUERY = gql`
       title
       status
       hostedAt
+      logoUrl
       versions {
         id
         isDefault
@@ -89,6 +90,15 @@ const SEND_MESSAGE_MUTATION = gql`
       messageKind
       message
       createdAt
+    }
+  }
+`;
+
+const UPDATE_GAME_LOGO_MUTATION = gql`
+  mutation UpdateGameLogo($gameId: Int!, $logoUrl: String!) {
+    updateGameLogo(gameId: $gameId, logoUrl: $logoUrl) {
+      id
+      logoUrl
     }
   }
 `;
@@ -175,12 +185,14 @@ export default function CreatePage() {
   const [planGenerating, setPlanGenerating] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const lastPlanChunkTimeRef = useRef(0);
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (planText && !initialPlanReceived) {
       setInitialPlanReceived(true);
     }
   }, [planText]);
+
 
   const { data: gameData, refetch: refetchGame } = useQuery(GAME_QUERY, {
     variables: { id: gameId! },
@@ -238,7 +250,9 @@ export default function CreatePage() {
   const [updatePlan] = useMutation(UPDATE_PLAN_MUTATION);
   const [updatePlanFromDescription, { loading: savingFromDescription }] =
     useMutation(UPDATE_PLAN_FROM_DESCRIPTION_MUTATION);
+  const [updateGameLogo] = useMutation(UPDATE_GAME_LOGO_MUTATION);
   const [buildGame, { loading: building }] = useMutation(BUILD_GAME_MUTATION);
+  const [logoUploading, setLogoUploading] = useState(false);
 
   const game = gameData?.game;
   const gamePlan = planData?.gamePlan;
@@ -263,6 +277,13 @@ export default function CreatePage() {
   const planOrBuildInProgress =
     isBuilding || (isPlanning && !initialPlanReceived) || planGenerating;
 
+  useEffect(() => {
+    setPlanViewMode(planOrBuildInProgress ? "json" : "description");
+    if (!planOrBuildInProgress) setDescriptionText(
+      gamePlan?.description?.trim() ?? formatPlanToDescription(planText),
+    );
+  }, [planOrBuildInProgress, setPlanViewMode]);
+
   // Treat "planning" with no content yet as generating so textareas stay disabled
   useEffect(() => {
     if (gameId && isPlanning && !planText.trim()) {
@@ -281,6 +302,12 @@ export default function CreatePage() {
     }
     setPlanGenerating(false);
   }, [gamePlan?.planText]);
+
+  useEffect(() => {
+    if (gameId && game?.logoUrl) {
+      setLogoUrl(game.logoUrl);
+    }
+  }, [gameId, game?.logoUrl]);
 
   useEffect(() => {
     if (!gameId || !gameData?.game?.versions?.length || hasPrefilledFromVersion.current) return;
@@ -483,6 +510,7 @@ export default function CreatePage() {
   };
 
   const handlePreview = async () => {
+    if (previewHtml) return setPreviewHtml(null);
     if (!planText.trim()) {
       toast.error("No plan to preview.");
       return;
@@ -590,27 +618,76 @@ export default function CreatePage() {
         />
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <label className="cursor-pointer">
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) setLogoUrl(URL.createObjectURL(f));
-                }}
-              />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button type="button" variant="outline" size="icon">
+            <input
+              ref={logoFileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              disabled={logoUploading}
+              onChange={async (e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                setLogoUploading(true);
+                try {
+                  const form = new FormData();
+                  form.append("file", f);
+                  if (gameId != null) form.append("gameId", String(gameId));
+                  const res = await fetch("/api/upload-logo", {
+                    method: "POST",
+                    body: form,
+                  });
+                  const data = await res.json().catch(() => ({}));
+                  if (!res.ok) {
+                    toast.error(data?.error ?? "Logo upload failed.");
+                    return;
+                  }
+                  const url = data?.url;
+                  if (url) {
+                    setLogoUrl(url);
+                    if (gameId != null) {
+                      await updateGameLogo({
+                        variables: { gameId, logoUrl: url },
+                      });
+                      refetchGame();
+                    }
+                  }
+                } catch (err) {
+                  console.error(err);
+                  toast.error("Logo upload failed.");
+                } finally {
+                  setLogoUploading(false);
+                  e.target.value = "";
+                }
+              }}
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  disabled={logoUploading}
+                  aria-label={logoUrl ? "Change logo" : "Select a logo"}
+                  onClick={() => logoFileInputRef.current?.click()}
+                  className={logoUrl ? "p-0" : undefined}
+                >
+                  {logoUploading ? (
+                    <Spinner size="sm" />
+                  ) : logoUrl ? (
+                    <img
+                      src={logoUrl}
+                      alt=""
+                      className="w-full h-full object-cover rounded-md"
+                    />
+                  ) : (
                     <ImagePlus className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Select a logo</p>
-                </TooltipContent>
-              </Tooltip>
-            </label>
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{logoUrl ? "Change logo" : "Select a logo"}</p>
+              </TooltipContent>
+            </Tooltip>
             {gameId && !isLive && !isBuilding && (
               <Button onClick={handleBuild} variant="secondary" disabled={building || !initialPlanReceived}>
                 {building ? <Spinner size="sm" /> : "Build"}

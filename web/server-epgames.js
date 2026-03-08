@@ -231,11 +231,13 @@ app
             typeof body?.status === "string" ? body.status : "live";
           const hostedAt =
             typeof body?.hostedAt === "string" ? body.hostedAt : "";
+          const logoUrl =
+            typeof body?.logoUrl === "string" ? body.logoUrl : undefined;
           if (!gameId || !Number.isInteger(gameId)) {
             sendJson(res, 400, { error: "gameId required" });
             return;
           }
-          await handleBuildComplete(gameId, status, hostedAt);
+          await handleBuildComplete(gameId, status, hostedAt, logoUrl);
           sendJson(res, 200, { ok: true });
         } catch (err) {
           console.error("[build-complete] error:", err);

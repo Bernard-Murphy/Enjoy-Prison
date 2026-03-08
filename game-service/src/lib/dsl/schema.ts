@@ -605,6 +605,7 @@ const TurnBasedCommonConfig = z.object({
       subtitle: z.string().default(""),
       showPlayerSetup: z.boolean().default(true),
       backgroundColor: HexColor.default("#1a1a2e"),
+      logoUrl: z.string().optional(),
     })
     .default({}),
 });
@@ -767,6 +768,7 @@ export const GameConfigSchema = z.object({
           title: z.string().default("My Game"),
           subtitle: z.string().default("Press Start"),
           backgroundColor: HexColor.default("#1a1a2e"),
+          logoUrl: z.string().optional(),
           buttons: z
             .array(
               z.object({

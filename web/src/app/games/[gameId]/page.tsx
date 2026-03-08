@@ -31,6 +31,7 @@ const GAME_QUERY = gql`
       hostedAt
       views
       userId
+      logoUrl
       versions {
         id
         hostedAt
