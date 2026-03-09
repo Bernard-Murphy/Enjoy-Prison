@@ -147,6 +147,7 @@ export default function BrowsePage() {
           </Button>
         </div>
       )}
+      <p className="text-muted-foreground text-sm text-center py-2">Created by Bernard Murphy</p>
     </div>
   );
 }

@@ -94,6 +94,7 @@ export default function HomePage() {
           <p className="text-muted-foreground">No games yet.</p>
         )}
       </section>
+      <p className="text-muted-foreground text-sm text-center py-2">Created by Bernard Murphy</p>
     </div>
   );
 }
